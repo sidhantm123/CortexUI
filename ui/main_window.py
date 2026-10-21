@@ -331,6 +331,8 @@ class MainWindow(QMainWindow):
         self._analog_panel.assignments_changed.connect(self._update_analog_events)
         self._analog_panel.detect_requested.connect(self._on_detect_events)
         self._analog_panel.event_selected.connect(self._on_event_selected)
+        self._analog_panel.events_edited.connect(self._on_event_edited)
+        self._analog_plot.event_time_dragged.connect(self._on_event_dragged)
 
     def _on_open_folder(self):
         """Handle open folder action."""
@@ -776,8 +778,15 @@ class MainWindow(QMainWindow):
         )
         self._update_analog_title()
 
-    def _update_analog_title(self):
+    def _current_analog_key(self):
+        """Selected analog channel, or None if nothing (still) loaded has it."""
         key = self._analog_panel.selected_channel()
+        if key is None or key[0] not in self._app_state.stream_states:
+            return None
+        return key
+
+    def _update_analog_title(self):
+        key = self._current_analog_key()
         if key is None:
             self._analog_plot.set_title("No analog channels")
             return
@@ -841,7 +850,7 @@ class MainWindow(QMainWindow):
 
     def _refresh_analog(self):
         """Show the selected analog channel for the analog plot's current view."""
-        key = self._analog_panel.selected_channel()
+        key = self._current_analog_key()
         if key is None or self._app_state.block is None:
             self._analog_plot.set_data(None, None)
             self._update_analog_title()
@@ -916,12 +925,39 @@ class MainWindow(QMainWindow):
         if not self._analog_panel.is_synced():
             self._analog_plot.set_view_range(start, end)
 
+    @Slot(object)
+    def _on_event_edited(self, event):
+        """An event's onset/offset was edited in the table."""
+        self._analog_plot.refresh_events()
+
+    @Slot(object, str, float)
+    def _on_event_dragged(self, event, edge: str, t: float):
+        """An onset/offset line was dragged on the analog plot."""
+        onset = t if edge == "onset" else event.onset
+        offset = t if edge == "offset" else event.offset
+        error = self._app_state.set_event_times(event, onset, offset)
+        self._analog_panel.set_edit_message(error or "")
+        self._analog_panel.refresh()
+        self._analog_panel.show_selected_event(event)
+        self._analog_plot.refresh_events()
+
     @Slot()
     def _on_detect_events(self):
         """Detect events on every assigned analog channel (runs in the background)."""
         assignments = list(self._app_state.analog_assignments.values())
         if not assignments or self._app_state.block is None:
             return
+
+        n_edited = self._app_state.edited_event_count()
+        if n_edited:
+            answer = QMessageBox.question(
+                self,
+                "Discard Edits?",
+                f"Re-detecting will discard {n_edited} edited event"
+                f"{'s' if n_edited != 1 else ''}. Continue?",
+            )
+            if answer != QMessageBox.StandardButton.Yes:
+                return
 
         streams = {a.stream for a in assignments}
         stream_info = {
@@ -946,6 +982,7 @@ class MainWindow(QMainWindow):
         def done(result):
             progress.close()
             self._app_state.events = result["events"]
+            self._analog_panel.set_edit_message("")
             lines = [
                 f"{label} → {modality}: {count} events (threshold {thr * 1e3:.3g} mV)"
                 for label, modality, thr, count in result["summary"]

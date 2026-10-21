@@ -178,5 +178,63 @@ class TestSessionRoundTrip(unittest.TestCase):
         self.assertEqual(restored.stream_states["ns5"].neural_channels(), [0, 1, 2])
 
 
+class TestEventEditing(unittest.TestCase):
+
+    def setUp(self):
+        self.app = AppState()
+        self.app.stream_states["ns5"] = StreamState("ns5", 4, FS, 100.0, analog_channels=[3])
+        self.app.events = number_events([
+            StimEvent("ICMS", 0, 10.0, 11.0, "ns5", 3, "ainp1"),
+            StimEvent("ICMS", 0, 20.0, 21.0, "ns5", 3, "ainp1"),
+        ])
+
+    def test_edit_rounds_to_sample_and_marks_edited(self):
+        e = self.app.events[0]
+        self.assertIsNone(self.app.set_event_times(e, 10.123456789, e.offset))
+        self.assertAlmostEqual(e.onset * FS, round(e.onset * FS), places=6)
+        self.assertTrue(e.onset_edited)
+        self.assertFalse(e.offset_edited)
+        self.assertEqual(e.detected_onset, 10.0)
+        self.assertEqual(self.app.edited_event_count(), 1)
+
+    def test_invalid_edits_rejected(self):
+        e = self.app.events[0]
+        self.assertIsNotNone(self.app.set_event_times(e, 11.5, 11.0))  # onset after offset
+        self.assertIsNotNone(self.app.set_event_times(e, -1.0, 11.0))
+        self.assertIsNotNone(self.app.set_event_times(e, 10.0, 200.0))  # past the end
+        self.assertEqual((e.onset, e.offset), (10.0, 11.0))
+        self.assertFalse(e.edited)
+
+    def test_moving_past_neighbour_renumbers(self):
+        first = self.app.events[0]
+        self.app.set_event_times(first, 25.0, 26.0)
+        self.assertEqual([e.onset for e in self.app.events], [20.0, 25.0])
+        self.assertEqual(first.number, 2)
+        self.assertIs(self.app.events[1], first)
+
+    def test_reset(self):
+        e = self.app.events[0]
+        self.app.set_event_times(e, 9.5, 11.5)
+        self.app.reset_event_times(e)
+        self.assertEqual((e.onset, e.offset), (10.0, 11.0))
+        self.assertEqual(self.app.edited_event_count(), 0)
+
+    def test_old_session_event_without_detected_times(self):
+        e = StimEvent.from_dict(
+            {"modality": "PNS", "number": 1, "onset": 1.0, "offset": 2.0,
+             "stream": "ns5", "channel": 3, "label": "ainp1"}
+        )
+        self.assertEqual((e.detected_onset, e.detected_offset), (1.0, 2.0))
+        self.assertFalse(e.edited)
+
+    def test_edited_times_survive_serialization(self):
+        e = self.app.events[0]
+        self.app.set_event_times(e, 9.5, 11.0)
+        restored = StimEvent.from_dict(json.loads(json.dumps(e.to_dict())))
+        self.assertEqual(restored.onset, 9.5)
+        self.assertEqual(restored.detected_onset, 10.0)
+        self.assertTrue(restored.onset_edited)
+
+
 if __name__ == "__main__":
     unittest.main()

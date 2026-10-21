@@ -2,7 +2,7 @@
 from typing import Dict, List, Optional
 import numpy as np
 
-from PySide6.QtCore import Signal, Qt
+from PySide6.QtCore import Signal, Qt, QTimer
 from PySide6.QtWidgets import QWidget, QVBoxLayout
 
 import pyqtgraph as pg
@@ -18,9 +18,14 @@ MAX_MARKERS = 300
 
 
 class AnalogPlot(QWidget):
-    """Plot of one analog input, with detected event onsets/offsets as dashed lines."""
+    """
+    Plot of one analog input, with detected event onsets/offsets as dashed lines.
+
+    The lines can be dragged to correct an event's onset or offset.
+    """
 
     view_range_changed = Signal(float, float)
+    event_time_dragged = Signal(object, str, float)  # StimEvent, "onset" | "offset", new time
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -49,6 +54,8 @@ class AnalogPlot(QWidget):
         self._colors: Dict[str, str] = {}
         self._markers: List[pg.InfiniteLine] = []
         self._highlight: Optional[pg.LinearRegionItem] = None
+        self._highlighted: Optional[StimEvent] = None
+        self._dragging = False
 
     def plot_item(self) -> pg.PlotItem:
         return self._plot
@@ -72,6 +79,7 @@ class AnalogPlot(QWidget):
 
     def highlight_event(self, event: Optional[StimEvent]):
         """Shade the selected event."""
+        self._highlighted = event
         if self._highlight is not None:
             self._plot.removeItem(self._highlight)
             self._highlight = None
@@ -97,7 +105,15 @@ class AnalogPlot(QWidget):
         self._update_markers()
         self.view_range_changed.emit(ranges[0][0], ranges[0][1])
 
+    def refresh_events(self):
+        """Redraw markers and the highlight after event times changed."""
+        self._events = sorted(self._events, key=lambda e: e.onset)
+        self.highlight_event(self._highlighted)
+        self._update_markers()
+
     def _update_markers(self):
+        if self._dragging:
+            return
         for line in self._markers:
             self._plot.removeItem(line)
         self._markers = []
@@ -108,12 +124,33 @@ class AnalogPlot(QWidget):
         onsets = np.array([e.onset for e in self._events])
         i0 = int(np.searchsorted(onsets, x0 - 10.0))
         visible = [e for e in self._events[i0:] if e.onset <= x1 and e.offset >= x0]
+        eps = 1e-5  # keeps onset strictly before offset while dragging
         for e in visible[:MAX_MARKERS]:
-            pen = pg.mkPen(self._colors.get(e.modality, "#d62728"), width=1, style=Qt.PenStyle.DashLine)
-            for t in (e.onset, e.offset):
-                line = pg.InfiniteLine(pos=t, angle=90, pen=pen, movable=False)
+            color = self._colors.get(e.modality, "#d62728")
+            pen = pg.mkPen(color, width=1, style=Qt.PenStyle.DashLine)
+            hover = pg.mkPen(color, width=3)
+            for edge, t, bounds in (
+                ("onset", e.onset, (0, e.offset - eps)),
+                ("offset", e.offset, (e.onset + eps, None)),
+            ):
+                line = pg.InfiniteLine(
+                    pos=t, angle=90, pen=pen, hoverPen=hover, movable=True, bounds=bounds
+                )
+                line.setToolTip(f"{e.modality} {e.number} {edge} — drag to adjust")
+                line.sigDragged.connect(self._on_drag_started)
+                line.sigPositionChangeFinished.connect(
+                    lambda ln, ev=e, ed=edge: self._on_drag_finished(ev, ed, ln.value())
+                )
                 self._plot.addItem(line)
                 self._markers.append(line)
+
+    def _on_drag_started(self, _line):
+        self._dragging = True
+
+    def _on_drag_finished(self, event: StimEvent, edge: str, t: float):
+        self._dragging = False
+        # Emit after this signal returns: handlers rebuild the markers, including the sender
+        QTimer.singleShot(0, lambda: self.event_time_dragged.emit(event, edge, float(t)))
 
     def clear(self):
         self._curve.setData([], [])

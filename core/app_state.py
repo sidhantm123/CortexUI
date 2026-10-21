@@ -5,7 +5,7 @@ from typing import Dict, Optional, List, Callable, Tuple
 from dataclasses import dataclass, field
 
 from models import StreamState
-from models.analog import AnalogAssignment, StimEvent, MODALITY_PRESETS
+from models.analog import AnalogAssignment, StimEvent, MODALITY_PRESETS, number_events
 from models.probe import ProbeGeometry
 from models.recording import RecordingBlock
 from tdt_io import TDTReader
@@ -165,6 +165,37 @@ class AppState:
             self.analog_assignments[(stream, channel)] = assignment
             if assignment.modality not in self.modality_names():
                 self.custom_modalities.append(assignment.modality)
+
+    def set_event_times(self, event: StimEvent, onset: float, offset: float) -> Optional[str]:
+        """
+        Change an event's onset/offset (rounded to the nearest sample) and renumber.
+
+        Returns an error message, or None when the change was applied.
+        """
+        state = self.stream_states.get(event.stream)
+        fs = state.sample_rate if state else None
+        if fs:
+            onset = round(onset * fs) / fs
+            offset = round(offset * fs) / fs
+        duration = state.duration if state else float("inf")
+        if onset < 0:
+            return "Onset can't be before the start of the recording"
+        if offset > duration:
+            return f"Offset can't be after the end of the recording ({duration:.4f} s)"
+        if onset >= offset:
+            return "Onset must be before offset"
+
+        event.onset, event.offset = onset, offset
+        self.events = number_events(self.events)
+        return None
+
+    def reset_event_times(self, event: StimEvent):
+        """Restore an event's detected onset/offset."""
+        event.onset, event.offset = event.detected_onset, event.detected_offset
+        self.events = number_events(self.events)
+
+    def edited_event_count(self) -> int:
+        return sum(1 for e in self.events if e.edited)
 
     def set_analog_channels(self, stream: str, channels: List[int]):
         """Change which channels of a stream are analog; drops assignments that no longer apply."""

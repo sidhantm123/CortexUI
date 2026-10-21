@@ -67,10 +67,31 @@ class StimEvent:
     stream: str
     channel: int
     label: str  # analog channel label, e.g. "ainp2"
+    # Times as detected, kept when the user edits onset/offset (None = same as onset/offset)
+    detected_onset: Optional[float] = None
+    detected_offset: Optional[float] = None
+
+    def __post_init__(self):
+        if self.detected_onset is None:
+            self.detected_onset = self.onset
+        if self.detected_offset is None:
+            self.detected_offset = self.offset
 
     @property
     def duration(self) -> float:
         return self.offset - self.onset
+
+    @property
+    def onset_edited(self) -> bool:
+        return abs(self.onset - self.detected_onset) > 1e-9
+
+    @property
+    def offset_edited(self) -> bool:
+        return abs(self.offset - self.detected_offset) > 1e-9
+
+    @property
+    def edited(self) -> bool:
+        return self.onset_edited or self.offset_edited
 
     def to_dict(self) -> dict:
         return asdict(self)

@@ -1,7 +1,7 @@
 """Analog channel panel: assign analog inputs to modalities, detect and browse events."""
 from typing import List, Optional, Tuple
 
-from PySide6.QtCore import Signal, Qt
+from PySide6.QtCore import Signal, Qt, QTimer
 from PySide6.QtWidgets import (
     QWidget,
     QVBoxLayout,
@@ -23,6 +23,7 @@ from PySide6.QtWidgets import (
     QInputDialog,
     QListWidget,
     QListWidgetItem,
+    QMenu,
 )
 
 from core.app_state import AppState
@@ -30,6 +31,17 @@ from models.analog import AnalogAssignment, DetectionSettings, MODALITY_PRESETS,
 
 NONE_ITEM = "(none)"
 NEW_ITEM = "New type…"
+
+# Event table columns; only onset and offset can be edited
+COL_EVENT, COL_ONSET, COL_OFFSET, COL_CHANNEL, COL_TYPE = range(5)
+
+
+def _index_of(items: list, obj) -> int:
+    """Position of obj in items by identity (events with equal fields are still distinct)."""
+    for i, item in enumerate(items):
+        if item is obj:
+            return i
+    return -1
 
 
 class AssignChannelDialog(QDialog):
@@ -188,6 +200,7 @@ class AnalogPanel(QWidget):
     assignments_changed = Signal()
     detect_requested = Signal()
     event_selected = Signal(object)  # StimEvent
+    events_edited = Signal(object)  # StimEvent whose onset/offset changed
     sync_changed = Signal(bool)
 
     def __init__(self, app_state: AppState, parent=None):
@@ -243,12 +256,24 @@ class AnalogPanel(QWidget):
         self._table = QTableWidget(0, 5)
         self._table.setHorizontalHeaderLabels(["Event", "Onset", "Offset", "Channel", "Type"])
         self._table.verticalHeader().setVisible(False)
-        self._table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
+        self._table.setEditTriggers(
+            QAbstractItemView.EditTrigger.DoubleClicked
+            | QAbstractItemView.EditTrigger.EditKeyPressed
+        )
+        self._table.setToolTip("Double-click an onset or offset to edit it")
         self._table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
         self._table.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
         self._table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
         self._table.cellClicked.connect(self._on_row_clicked)
+        self._table.itemChanged.connect(self._on_item_changed)
+        self._table.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+        self._table.customContextMenuRequested.connect(self._on_table_menu)
         layout.addWidget(self._table, 1)
+
+        self._edit_msg_label = QLabel("")
+        self._edit_msg_label.setWordWrap(True)
+        self._edit_msg_label.setStyleSheet("color: #c0392b; font-size: 11px;")
+        layout.addWidget(self._edit_msg_label)
 
         self._summary_label = QLabel("")
         self._summary_label.setWordWrap(True)
@@ -297,13 +322,32 @@ class AnalogPanel(QWidget):
 
     def _fill_table(self):
         events = self._app_state.events
+        self._table.blockSignals(True)
         self._table.setRowCount(len(events))
         for row, e in enumerate(events):
             values = [str(e.number), f"{e.onset:.4f}", f"{e.offset:.4f}", e.label, e.modality]
             for col, v in enumerate(values):
                 item = QTableWidgetItem(v)
                 item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
+                if col not in (COL_ONSET, COL_OFFSET):
+                    item.setFlags(item.flags() & ~Qt.ItemFlag.ItemIsEditable)
                 self._table.setItem(row, col, item)
+            self._mark_edited(row, e)
+        self._table.blockSignals(False)
+
+    def _mark_edited(self, row: int, e: StimEvent):
+        """Bold an edited onset/offset, with the detected time in its tooltip."""
+        for col, edited, detected in (
+            (COL_ONSET, e.onset_edited, e.detected_onset),
+            (COL_OFFSET, e.offset_edited, e.detected_offset),
+        ):
+            item = self._table.item(row, col)
+            font = item.font()
+            font.setBold(edited)
+            item.setFont(font)
+            item.setToolTip(
+                f"Edited — detected at {detected:.4f} s (right-click to reset)" if edited else ""
+            )
 
     def _update_channel_info(self):
         """Update the channel label and the event spinbox for the selected channel's modality."""
@@ -350,19 +394,70 @@ class AnalogPanel(QWidget):
         key = (event.stream, event.channel)
         if key in self._channels and self.selected_channel() != key:
             self._channel_spin.setValue(self._channels.index(key) + 1)
-        if event in self._modality_events:
+        i = _index_of(self._modality_events, event)
+        if i >= 0:
             self._event_spin.blockSignals(True)
-            self._event_spin.setValue(self._modality_events.index(event) + 1)
+            self._event_spin.setValue(i + 1)
             self._event_spin.blockSignals(False)
         self.event_selected.emit(event)
 
     def _select_row(self, event: StimEvent):
-        try:
-            row = self._app_state.events.index(event)
-        except ValueError:
+        row = _index_of(self._app_state.events, event)
+        if row < 0:
             return
         self._table.selectRow(row)
         self._table.scrollToItem(self._table.item(row, 0))
+
+    def show_selected_event(self, event: StimEvent):
+        """Select an event's row and event number without jumping the view (after an edit)."""
+        self._select_row(event)
+        i = _index_of(self._modality_events, event)
+        if i >= 0:
+            self._event_spin.blockSignals(True)
+            self._event_spin.setValue(i + 1)
+            self._event_spin.blockSignals(False)
+
+    def set_edit_message(self, text: str):
+        self._edit_msg_label.setText(text)
+
+    def _on_item_changed(self, item: QTableWidgetItem):
+        row, col = item.row(), item.column()
+        if col not in (COL_ONSET, COL_OFFSET) or not 0 <= row < len(self._app_state.events):
+            return
+        event = self._app_state.events[row]
+        try:
+            value = float(item.text())
+        except ValueError:
+            error = "Enter a time in seconds"
+        else:
+            onset = value if col == COL_ONSET else event.onset
+            offset = value if col == COL_OFFSET else event.offset
+            error = self._app_state.set_event_times(event, onset, offset)
+
+        # Rebuild after this signal returns: refresh() replaces the item being edited
+        QTimer.singleShot(0, lambda: self._after_edit(event, error))
+
+    def _after_edit(self, event: StimEvent, error):
+        self.set_edit_message(error or "")
+        self.refresh()
+        self.show_selected_event(event)
+        if error is None:
+            self.events_edited.emit(event)
+
+    def _on_table_menu(self, pos):
+        row = self._table.rowAt(pos.y())
+        if not 0 <= row < len(self._app_state.events):
+            return
+        event = self._app_state.events[row]
+        menu = QMenu(self)
+        reset = menu.addAction("Reset to detected times")
+        reset.setEnabled(event.edited)
+        if menu.exec(self._table.viewport().mapToGlobal(pos)) is reset:
+            self._app_state.reset_event_times(event)
+            self.set_edit_message("")
+            self.refresh()
+            self.show_selected_event(event)
+            self.events_edited.emit(event)
 
     def _on_assign(self):
         key = self.selected_channel()
