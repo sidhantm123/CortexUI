@@ -19,6 +19,9 @@ pg.setConfigOptions(
 # Left axis width shared with the analog plot (x-linked plots align by screen position)
 LEFT_AXIS_WIDTH = 70
 
+# Most blanked spans shaded at once (only spans in view are passed in)
+MAX_BLANK_SPANS = 300
+
 # Color palette for multi-channel overlay
 CHANNEL_COLORS = [
     "#1f77b4",  # Blue
@@ -67,6 +70,9 @@ class TimeSeriesPlot(QWidget):
         # Selection region
         self._selection_region: Optional[pg.LinearRegionItem] = None
         self._selection_enabled = False
+
+        # Shaded blanked spans
+        self._blank_items: List[pg.LinearRegionItem] = []
 
     def _setup_ui(self):
         """Set up the widget layout."""
@@ -190,6 +196,20 @@ class TimeSeriesPlot(QWidget):
         for i, ch_idx in enumerate(self._channel_indices):
             if ch_idx in self._plot_items and i < data.shape[0]:
                 self._plot_items[ch_idx].setData(time_axis, data[i])
+
+    def set_blank_spans(self, spans: List[Tuple[float, float]]):
+        """Lightly shade blanked time spans (at most MAX_BLANK_SPANS)."""
+        for item in self._blank_items:
+            self._plot.removeItem(item)
+        self._blank_items = []
+        for start, end in spans[:MAX_BLANK_SPANS]:
+            item = pg.LinearRegionItem(
+                values=[start, end], brush=pg.mkBrush(120, 120, 120, 45),
+                pen=pg.mkPen(None), movable=False,
+            )
+            item.setZValue(-10)
+            self._plot.addItem(item)
+            self._blank_items.append(item)
 
     def set_scatter_mode(self, enabled: bool):
         """

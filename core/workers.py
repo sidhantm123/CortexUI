@@ -422,6 +422,127 @@ class EventDetectWorker(CancellableWorker):
             self.signals.error.emit(str(e))
 
 
+class BlankingWorker(CancellableWorker):
+    """
+    Compute adaptive blank intervals for one modality.
+
+    Each channel's baseline is the median spike-band RMS (window_ms windows) over clean
+    one-second windows far from any event. After each event's offset the blank extends
+    until n_windows consecutive windows are below multiplier x baseline.
+
+    Emits result: BlankResult.
+    """
+
+    MARGIN_S = 0.1  # extra data read on each side and discarded (filter edge effects)
+
+    def __init__(self, reader, stream: str, fs: float, duration: float, channels,
+                 modality: str, events, all_events, settings):
+        """
+        Args:
+            channels: neural channel indices to blank.
+            events: this modality's StimEvents.
+            all_events: every StimEvent (clean windows avoid all of them).
+            settings: BlankingSettings (mode must be advanced).
+        """
+        super().__init__()
+        self.reader = reader
+        self.stream = stream
+        self.fs = fs
+        self.duration = duration
+        self.channels = list(channels)
+        self.modality = modality
+        self.events = [e for e in events if e.number not in settings.excluded_trials]
+        self.all_events = list(all_events)
+        self.settings = settings
+
+    def _read(self, t0: float, t1: float) -> np.ndarray:
+        data, _ = self.reader.get_stream_data(
+            self.stream, channels=self.channels, start_time=t0, end_time=t1
+        )
+        return np.atleast_2d(data)
+
+    def _spike_rms(self, t0: float, t1: float, window_n: int) -> np.ndarray:
+        """Spike-band window RMS of [t0, t1), reading a margin on each side."""
+        from dsp.blanking import spike_band, window_rms
+
+        r0 = max(0.0, t0 - self.MARGIN_S)
+        r1 = min(self.duration, t1 + self.MARGIN_S)
+        data = spike_band(self._read(r0, r1), self.fs)
+        i0 = int(round((t0 - r0) * self.fs))
+        i1 = i0 + int(round((t1 - t0) * self.fs))
+        return window_rms(data[:, i0:i1], window_n)
+
+    @Slot()
+    def run(self):
+        from dsp.blanking import clean_windows, adaptive_end_windows
+        from models.blanking import BlankResult
+
+        self.signals.started.emit()
+        try:
+            st = self.settings
+            w_s = st.window_ms * 1e-3
+            window_n = max(1, int(round(w_s * self.fs)))
+            min_win = int(np.ceil(st.min_post_ms * 1e-3 / w_s - 1e-9))
+            max_win = int(np.floor(st.max_post_ms * 1e-3 / w_s + 1e-9))
+            n_steps = 20 + len(self.events)
+
+            # Baseline: median window RMS per channel over clean stretches
+            starts = clean_windows(
+                [(e.onset, e.offset) for e in self.all_events], self.duration
+            )
+            if not starts:
+                raise ValueError(
+                    "No stretch of the recording is at least 3 s away from every event, "
+                    "so there is no clean data to measure the baseline."
+                )
+            rms = []
+            for i, t in enumerate(starts):
+                if self.is_cancelled():
+                    self.signals.cancelled.emit()
+                    return
+                rms.append(self._spike_rms(t, t + 1.0, window_n))
+                self.signals.progress.emit(int(100 * (i + 1) / n_steps))
+            baseline = np.median(np.concatenate(rms, axis=1), axis=1)
+
+            n_c = len(self.channels)
+            start_s = np.zeros((len(self.events), n_c))
+            end_s = np.zeros((len(self.events), n_c))
+            n_capped = 0
+            n_total = max_win + max(1, st.n_windows)
+            for i, e in enumerate(self.events):
+                if self.is_cancelled():
+                    self.signals.cancelled.emit()
+                    return
+                t1 = min(self.duration, e.offset + n_total * w_s)
+                below = self._spike_rms(e.offset, t1, window_n) < st.multiplier * baseline[:, None]
+                k, capped = adaptive_end_windows(below, st.n_windows, min_win, max_win)
+                post = np.clip(k * w_s, st.min_post_ms * 1e-3, st.max_post_ms * 1e-3)
+                post[capped] = st.max_post_ms * 1e-3
+                start_s[i] = max(0.0, e.onset - st.adv_pre_ms * 1e-3)
+                end_s[i] = np.minimum(e.offset + post, self.duration)
+                n_capped += int(capped.sum())
+                self.signals.progress.emit(int(100 * (20 + i + 1) / n_steps))
+
+            self.signals.result.emit(BlankResult(
+                modality=self.modality,
+                stream=self.stream,
+                channels=self.channels,
+                trials=[e.number for e in self.events],
+                start_s=start_s,
+                end_s=end_s,
+                interpolation=st.interpolation,
+                mode=st.mode,
+                n_capped=n_capped,
+                median_post_s=float(np.median(
+                    end_s - np.array([e.offset for e in self.events])[:, None]
+                )),
+            ))
+            self.signals.finished.emit()
+
+        except Exception as e:
+            self.signals.error.emit(str(e))
+
+
 class WorkerManager:
     """Manages worker threads and provides cancellation."""
 

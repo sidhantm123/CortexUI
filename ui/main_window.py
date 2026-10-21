@@ -1,4 +1,5 @@
 """Main application window."""
+import copy
 import os
 from pathlib import Path
 from typing import Optional
@@ -32,9 +33,12 @@ from core.workers import (
     FilterWorker,
     SpectralWorker,
     EventDetectWorker,
+    BlankingWorker,
 )
 from models import StreamState, ChannelMode
 from dsp import apply_filter_chain, decimate_for_display
+from dsp.blanking import apply_blanking, basic_result, blank_spans
+from models.blanking import ADVANCED
 from models.filter_config import FilterType
 
 from .stream_panel import StreamPanel
@@ -45,6 +49,7 @@ from .plot_widget import TimeSeriesPlot, SpectrumPlot
 from .probe_map_widget import ProbeMapWidget
 from .analog_plot import AnalogPlot
 from .analog_panel import AnalogPanel
+from .blanking_panel import BlankingPanel
 
 
 def _placeholder_tab(text: str) -> QWidget:
@@ -108,6 +113,7 @@ class MainWindow(QMainWindow):
         self._pending_analog_refresh = False
         self._analog_workers = WorkerManager()
         self._detect_worker: Optional[EventDetectWorker] = None
+        self._blank_worker: Optional[BlankingWorker] = None
 
         self._setup_ui()
         self._setup_menu()
@@ -173,8 +179,9 @@ class MainWindow(QMainWindow):
         self._control_panel = ControlPanel()
         self._control_tabs.addTab(self._control_panel, "Channels")
 
-        # Blanking tab (later step)
-        self._control_tabs.addTab(_placeholder_tab("Blanking — coming in a later step"), "Blanking")
+        # Blanking tab
+        self._blanking_panel = BlankingPanel(self._app_state)
+        self._control_tabs.addTab(self._blanking_panel, "Blanking")
 
         # Filter tab
         self._filter_panel = FilterPanel()
@@ -288,6 +295,9 @@ class MainWindow(QMainWindow):
         self._status_label = QLabel("Ready - Open a TDT or Blackrock recording folder to begin")
         self._statusbar.addWidget(self._status_label, 1)
 
+        self._blanking_indicator = QLabel("")
+        self._statusbar.addPermanentWidget(self._blanking_indicator)
+
         self._filter_indicator = QLabel("")
         self._statusbar.addPermanentWidget(self._filter_indicator)
 
@@ -334,6 +344,10 @@ class MainWindow(QMainWindow):
         self._analog_panel.events_edited.connect(self._on_event_edited)
         self._analog_plot.event_time_dragged.connect(self._on_event_dragged)
 
+        # Blanking
+        self._blanking_panel.apply_requested.connect(self._on_apply_blanking)
+        self._blanking_panel.remove_requested.connect(self._on_remove_blanking)
+
     def _on_open_folder(self):
         """Handle open folder action."""
         folder = QFileDialog.getExistingDirectory(
@@ -367,6 +381,7 @@ class MainWindow(QMainWindow):
 
             self._reset_analog_view()
             self._update_status()
+            self._update_blanking_indicator()
 
         except Exception as e:
             QMessageBox.critical(
@@ -412,6 +427,7 @@ class MainWindow(QMainWindow):
             self._refresh_plot()
 
             self._update_status()
+            self._update_blanking_indicator()
 
     @Slot(ChannelMode)
     def _on_channel_mode_changed(self, mode: ChannelMode):
@@ -519,7 +535,8 @@ class MainWindow(QMainWindow):
                 end_time=params["end"],
             )
 
-            # Apply filters if any
+            # Blank stimulation artifacts, then apply filters if any
+            data = self._blank(data, time_axis, params["channels"], state.stream_name)
             if state.filters and not state.global_bypass:
                 data, _, _ = apply_filter_chain(
                     data, state.filters, state.sample_rate, state.global_bypass
@@ -702,6 +719,9 @@ class MainWindow(QMainWindow):
             plot_time = time_view
 
         channels = state.get_active_channels()
+        self._time_plot.set_blank_spans(
+            blank_spans(self._app_state.active_blanking(state.stream_name), channels, start, end)
+        )
         scatter = state.scatter_mode
         if channels == self._last_plot_channels and scatter == self._last_scatter_mode:
             self._time_plot.update_data(plot_data, plot_time)
@@ -721,13 +741,20 @@ class MainWindow(QMainWindow):
 
         channels = state.get_active_channels()
 
-        # Apply filter chain to the full buffer (always returns 3-tuple)
+        # Blank stimulation artifacts on copies (the raw buffer is kept, so removing
+        # blanking needs no reload), then apply the filter chain (always returns 3-tuple)
+        raw = self._blank(self._raw_data, self._raw_time, channels, state.stream_name)
+        raw_all = None
+        if self._raw_data_all is not None:
+            raw_all = self._blank(
+                self._raw_data_all, self._raw_time, list(range(state.num_channels)), state.stream_name
+            )
         data, warnings, vrms_dict = apply_filter_chain(
-            self._raw_data,
+            raw,
             state.filters,
             state.sample_rate,
             state.global_bypass,
-            all_channel_data=self._raw_data_all,
+            all_channel_data=raw_all,
             channel_indices=channels,
         )
         if warnings:
@@ -764,6 +791,8 @@ class MainWindow(QMainWindow):
         self._analog_time = None
         self._analog_panel.refresh()
         self._analog_panel.set_summary("")
+        self._blanking_panel.refresh()
+        self._update_blanking_indicator()
         self._analog_plot.highlight_event(None)
         self._update_analog_events()
         state = self._app_state.get_current_state()
@@ -823,6 +852,8 @@ class MainWindow(QMainWindow):
             self._last_plot_channels = []
             self._buffer_channels = []
             self._refresh_plot()
+        self._app_state.mark_blanking_stale()  # electrode set changed
+        self._blanking_panel.update_status()
         self._update_analog_events()
         self._refresh_analog()
 
@@ -925,10 +956,105 @@ class MainWindow(QMainWindow):
         if not self._analog_panel.is_synced():
             self._analog_plot.set_view_range(start, end)
 
+    # ------------------------------------------------------------------ blanking
+
+    def _blank(self, data, time_axis, channels, stream_name):
+        """Data with this stream's applied blanking interpolated across (unchanged if none)."""
+        results = self._app_state.active_blanking(stream_name)
+        if not results or data is None or time_axis is None:
+            return data
+        return apply_blanking(data, time_axis, channels, results)
+
+    def _blanking_summary_lines(self, stream_name: str) -> list:
+        results = self._app_state.active_blanking(stream_name)
+        if not results:
+            return ["  (none)"]
+        lines = []
+        for r in results:
+            s = self._app_state.get_blanking_settings(r.modality)
+            if r.mode == ADVANCED:
+                how = (f"adaptive: pre {s.adv_pre_ms:g} ms, until {s.n_windows} x {s.window_ms:g} ms "
+                       f"windows < {s.multiplier:g}x baseline (post {s.min_post_ms:g}-{s.max_post_ms:g} ms)")
+            else:
+                how = f"pre {s.pre_ms:g} ms, post {s.post_ms:g} ms"
+            lines.append(f"  {r.modality}: {how}, {r.interpolation} interpolation, {r.summary()}")
+        return lines
+
+    def _update_blanking_indicator(self):
+        state = self._app_state.get_current_state()
+        results = self._app_state.active_blanking(state.stream_name) if state else []
+        names = ", ".join(r.modality for r in results)
+        self._blanking_indicator.setText(f"Blanking: {names}" if names else "")
+
+    def _blanking_changed(self):
+        """Blanking was applied or removed: re-process the loaded buffer."""
+        self._blanking_panel.update_status()
+        self._update_blanking_indicator()
+        self._apply_filters()
+
+    @Slot(str)
+    def _on_apply_blanking(self, modality: str):
+        state = self._app_state.get_current_state()
+        if state is None:
+            return
+        events = [e for e in self._app_state.events if e.modality == modality]
+        if not events:
+            return
+        settings = self._app_state.get_blanking_settings(modality)
+        channels = state.neural_channels()
+
+        if settings.mode != ADVANCED:
+            self._app_state.blanking_results[modality] = basic_result(
+                modality, state.stream_name, events, channels, settings
+            )
+            self._blanking_changed()
+            return
+
+        if all(e.number in settings.excluded_trials for e in events):
+            QMessageBox.information(self, "No Trials", "Tick at least one trial to blank.")
+            return
+
+        progress = QProgressDialog(
+            f"Measuring baseline noise and artifact recovery ({modality})...", "Cancel", 0, 100, self
+        )
+        progress.setWindowModality(Qt.WindowModality.WindowModal)
+        progress.setMinimumDuration(0)
+
+        worker = BlankingWorker(
+            self._app_state.reader, state.stream_name, state.sample_rate, state.duration,
+            channels, modality, events, self._app_state.events, copy.deepcopy(settings),
+        )
+        worker.signals.progress.connect(progress.setValue)
+        progress.canceled.connect(worker.cancel)
+
+        def done(result):
+            progress.close()
+            self._app_state.blanking_results[modality] = result
+            self._blanking_changed()
+            self._status_label.setText(f"Blanking {modality}: {result.summary()}")
+
+        def failed(err):
+            progress.close()
+            QMessageBox.warning(self, "Blanking Error", f"Failed to compute blanking:\n\n{err}")
+
+        worker.signals.result.connect(done)
+        worker.signals.error.connect(failed)
+        worker.signals.cancelled.connect(progress.close)
+        # Not submitted to _worker_manager: plot refreshes call cancel_all() on it
+        self._blank_worker = worker
+        self._worker_manager.thread_pool.start(worker)
+        progress.show()
+
+    @Slot(str)
+    def _on_remove_blanking(self, modality: str):
+        self._app_state.blanking_results.pop(modality, None)
+        self._blanking_changed()
+
     @Slot(object)
     def _on_event_edited(self, event):
         """An event's onset/offset was edited in the table."""
         self._analog_plot.refresh_events()
+        self._blanking_panel.refresh()
 
     @Slot(object, str, float)
     def _on_event_dragged(self, event, edge: str, t: float):
@@ -940,6 +1066,7 @@ class MainWindow(QMainWindow):
         self._analog_panel.refresh()
         self._analog_panel.show_selected_event(event)
         self._analog_plot.refresh_events()
+        self._blanking_panel.refresh()
 
     @Slot()
     def _on_detect_events(self):
@@ -982,7 +1109,10 @@ class MainWindow(QMainWindow):
         def done(result):
             progress.close()
             self._app_state.events = result["events"]
+            self._app_state.blanking_results.clear()  # trial times changed
             self._analog_panel.set_edit_message("")
+            self._blanking_panel.refresh()
+            self._apply_filters()
             lines = [
                 f"{label} → {modality}: {count} events (threshold {thr * 1e3:.3g} mV)"
                 for label, modality, thr, count in result["summary"]
@@ -1210,7 +1340,7 @@ class MainWindow(QMainWindow):
                     for f in state.filters
                 ) and not state.global_bypass
 
-                raw, _ = self._app_state.reader.get_stream_data(
+                raw, raw_time = self._app_state.reader.get_stream_data(
                     state.stream_name,
                     channels=channels,
                     start_time=t1,
@@ -1229,8 +1359,13 @@ class MainWindow(QMainWindow):
                         end_time=t2,
                     )
 
-                progress.setLabelText("Applying filter chain...")
+                progress.setLabelText("Blanking and applying filter chain...")
                 QApplication.processEvents()
+                raw = self._blank(raw, raw_time, channels, state.stream_name)
+                if all_channel_data is not None:
+                    all_channel_data = self._blank(
+                        all_channel_data, raw_time, list(range(state.num_channels)), state.stream_name
+                    )
                 data, _, _ = apply_filter_chain(
                     raw,
                     state.filters,
@@ -1345,6 +1480,9 @@ class MainWindow(QMainWindow):
             f"Sample Layout : {layout_desc}",
             f"File Extension: {opts['extension']}",
             "",
+            "Blanking (applied before filters):",
+        ] + self._blanking_summary_lines(state.stream_name) + [
+            "",
             "Active Filters:",
         ] + filter_lines
 
@@ -1374,8 +1512,9 @@ class MainWindow(QMainWindow):
         # Cancel any running workers
         self._worker_manager.cancel_all()
         self._analog_workers.cancel_all()
-        if self._detect_worker is not None:
-            self._detect_worker.cancel()
+        for worker in (self._detect_worker, self._blank_worker):
+            if worker is not None:
+                worker.cancel()
         self._worker_manager.wait_all(3000)
         self._app_state.close()
         event.accept()

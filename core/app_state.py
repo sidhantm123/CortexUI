@@ -6,6 +6,7 @@ from dataclasses import dataclass, field
 
 from models import StreamState
 from models.analog import AnalogAssignment, StimEvent, MODALITY_PRESETS, number_events
+from models.blanking import BlankingSettings, BlankResult
 from models.probe import ProbeGeometry
 from models.recording import RecordingBlock
 from tdt_io import TDTReader
@@ -42,6 +43,10 @@ class AppState:
     custom_modalities: List[str] = field(default_factory=list)
     # Detected stimulation events (numbered per modality)
     events: List[StimEvent] = field(default_factory=list)
+
+    # Artifact blanking per modality: settings, and the intervals from "Apply Blanking"
+    blanking_settings: Dict[str, BlankingSettings] = field(default_factory=dict)
+    blanking_results: Dict[str, BlankResult] = field(default_factory=dict)
 
     # Callbacks for state changes
     _on_block_loaded: List[Callable] = field(default_factory=list)
@@ -142,6 +147,7 @@ class AppState:
         self.current_stream = None
         self.analog_assignments.clear()
         self.events = []
+        self.blanking_results.clear()
 
     def modality_names(self) -> List[str]:
         """Preset modalities followed by the user's own."""
@@ -187,12 +193,29 @@ class AppState:
 
         event.onset, event.offset = onset, offset
         self.events = number_events(self.events)
+        self.mark_blanking_stale(event.modality)
         return None
 
     def reset_event_times(self, event: StimEvent):
         """Restore an event's detected onset/offset."""
         event.onset, event.offset = event.detected_onset, event.detected_offset
         self.events = number_events(self.events)
+        self.mark_blanking_stale(event.modality)
+
+    def get_blanking_settings(self, modality: str) -> BlankingSettings:
+        if modality not in self.blanking_settings:
+            self.blanking_settings[modality] = BlankingSettings()
+        return self.blanking_settings[modality]
+
+    def mark_blanking_stale(self, modality: Optional[str] = None):
+        """Events changed after blanking was computed (all modalities when None)."""
+        for name, res in self.blanking_results.items():
+            if modality is None or name == modality:
+                res.stale = True
+
+    def active_blanking(self, stream: str) -> List[BlankResult]:
+        """Applied blanking results for a stream."""
+        return [r for r in self.blanking_results.values() if r.stream == stream]
 
     def edited_event_count(self) -> int:
         return sum(1 for e in self.events if e.edited)
@@ -230,6 +253,8 @@ class AppState:
             "custom_modalities": self.custom_modalities,
             "analog_assignments": [a.to_dict() for a in self.analog_assignments.values()],
             "events": [e.to_dict() for e in self.events],
+            "blanking_settings": {m: b.to_dict() for m, b in self.blanking_settings.items()},
+            "blanking_results": [r.to_dict() for r in self.blanking_results.values()],
         }
 
         with open(filepath, "w") as f:
@@ -297,6 +322,16 @@ class AppState:
             e for e in (StimEvent.from_dict(d) for d in session.get("events", []))
             if (e.stream, e.channel) in self.analog_assignments
         ]
+
+        # Restore blanking settings and results (results only for streams that still exist)
+        self.blanking_settings = {
+            m: BlankingSettings.from_dict(d)
+            for m, d in session.get("blanking_settings", {}).items()
+        }
+        for r_dict in session.get("blanking_results", []):
+            res = BlankResult.from_dict(r_dict)
+            if res.stream in self.stream_states:
+                self.blanking_results[res.modality] = res
 
         # Restore probe geometry (optional — missing key or None is fine)
         probe_dict = session.get("probe")

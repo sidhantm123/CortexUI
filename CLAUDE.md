@@ -11,13 +11,15 @@ delete details that the code or git history already records.
 | | |
 |---|---|
 | Active branch | `NSP_Basic` (not pushed; branched from `main` @ `beb2da4`) |
-| Last commit | `7b559ef` Let users correct detected event onset/offset times |
-| Tests | 66 passing: `tdtgui/bin/python -m unittest discover tests` |
-| Next step | **Step 2: Blanking tab** (plan in §4) |
+| Last commit | Add Blanking tab (step 2) — see `git log` |
+| Tests | 78 passing: `tdtgui/bin/python -m unittest discover tests` |
+| Next step | **Step 3: Filters cleanup** (§4), after the user tests blanking |
 
 ### Done
 1. Analog input viewer and event detection (`78664d0`).
 2. Editable event onset/offset, by table cell or by dragging the line on the analog plot (`7b559ef`).
+3. Blanking tab: Basic (fixed pads) and Advanced (adaptive per-channel post-pad), Apply/Remove, applied before filters
+   everywhere, saved in the session.
 
 ### Branches
 - **`main`:** the TDT/Blackrock viewer with filters, FFT/PSD, probe map, export and `.ccf` info.
@@ -60,6 +62,7 @@ dsp/                  filters, CAR/CMR, Vrms, decimation, spectral, events.py �
 ui/main_window.py     layout, signal wiring, plot buffering, detection/progress dialogs
 ui/analog_plot.py     analog plot: draggable onset/offset lines, event highlight
 ui/analog_panel.py    Analog Ch. panel + AssignChannelDialog + AnalogListDialog
+ui/blanking_panel.py  Blanking tab: one ModalityBlankingPage (Basic | Advanced) per modality with events
 tests/                unittest; test_blackrock.py has write_nsx_23() to build synthetic .nsX files
 ```
 
@@ -81,6 +84,21 @@ tests/                unittest; test_blackrock.py has write_nsx_23() to build sy
   - Rising edges closer than the merge gap (onset-to-onset) join into one event.
   - Events shorter than the minimum duration are dropped.
   - `EventDetectWorker` reads assigned lines in 60 s chunks as float32.
+- **Blanking (`models/blanking.py`, `dsp/blanking.py`, `BlankingWorker`):**
+  - Settings are per modality (`AppState.blanking_settings`). Results are per modality (`AppState.blanking_results`),
+    each holding the stream plus `start_s`/`end_s` of shape (trials × channels). Never store a sample mask.
+  - `MainWindow._blank()` interpolates the active results on a copy of each buffer before `apply_filter_chain`: in the
+    plot (display rows and the all-channel CAR buffer), Analysis and Export. The raw buffer is kept, so Remove is
+    instant.
+  - **Advanced:**
+    - Baseline per channel = the median 50 ms window RMS of the **250–5000 Hz** band over 20 one-second windows at least
+      3 s from any event.
+    - The blank ends at the first run of N quiet windows after the offset, clamped to the min/max post-pad.
+  - Editing events, changing settings or editing the analog list marks results `stale`; they are still applied but
+    flagged. Re-detecting events clears them.
+  - **RP01 check (ICMS, 1.5×):** median post-pad 1.65 s (notes: ~1.7 s), 2.1% at the 100 ms floor, none capped. The
+    slowest channels are rows 125, 123, 121, 113, 111 (stim electrode first), matching the notes. A 300 Hz high-pass
+    instead gave 1.35 s, which is why the 250–5000 Hz band is used.
 - **Plotting:**
   - Only a buffer of about 3× the view is read from disk, and it is min/max-decimated to ≤ 8000 points.
   - The analog plot keeps its own buffer and `WorkerManager`. It is x-linked to the main plot when Sync is on.
@@ -101,27 +119,7 @@ tests/                unittest; test_blackrock.py has write_nsx_23() to build sy
 
 ## 4. Roadmap
 
-### Step 2: Blanking tab (NEXT, plan approved in principle)
-- **Layout:** one sub-tab per modality that has events. The tab is disabled with "Detect events first" until events exist.
-- **Basic:** pre-stim pad (1 ms) and post-stim pad (0 ms). All electrodes are blanked over [onset − pre, offset + post],
-  with linear interpolation.
-- **Advanced** (replaces Basic):
-  - **Settings, all editable:** pre-pad 1 ms, window 50 ms, 3 windows, **multiplier 1.5×** (the user wants it easy to
-    edit), minimum post-pad 100 ms, maximum post-pad 5 s.
-  - **Baseline per channel:** the median 50 ms **spike-band** (300 Hz high-pass) RMS over 20 one-second windows at least 3 s
-    from any event.
-  - **Blank end per channel and trial:** a forward scan from the offset. It ends at the first run of N windows that are all
-    below k × baseline, clamped to the minimum and maximum post-pad. Report capped trials; don't drop them.
-  - **Trial picker:** Onset | Offset | Blank ☑, plus Blank All Trials.
-  - **Interpolation:** Linear or Cubic.
-- **Apply Blanking** runs a worker. **Remove Blanking** undoes it instantly (keep the unblanked raw buffer).
-- **Where it applies:** to raw data **before** the filter chain everywhere: the main plot, the CAR/CMR all-channel buffer,
-  Analysis and Export (list it in the export `.txt`).
-- **Display:** shade blanked spans on the main plot. Save settings and intervals in the session.
-- **Storage:** store intervals (n_trials × n_channels start/end), **never a sample mask**; a full mask is about 3.7 GB.
-- **Planned files:** `models/blanking.py`, `dsp/blanking.py`, `ui/blanking_panel.py`, `BlankingWorker`, `tests/test_blanking.py`.
-
-### Step 3: Filters cleanup
+### Step 3: Filters cleanup (NEXT)
 - Remove `VRMS_THRESHOLD` from the filter chain (`models/filter_config.py`, `dsp/filters.py`, `ui/filter_panel.py`) and
   migrate old sessions that use it.
 
@@ -132,6 +130,8 @@ tests/                unittest; test_blackrock.py has write_nsx_23() to build sy
 - A "Plots" tab: the user intends to add it later. Don't build it yet.
 - Loading `.nev` spikes/events.
 - Shading events on the main plot (currently only on the analog plot).
+- Blanking is computed for the stream that is current when Apply is pressed. Multi-stream recordings (e.g. ns5 + ns2)
+  would need it applied per stream.
 - Faster full-file reads: detection takes about 50 s on 8 GB through neo's memmap. A direct sequential `.nsX` reader exists
   in the archive (`nsp_pipeline:blackrock_io/nsx_header.py`) if it's ever needed.
 
