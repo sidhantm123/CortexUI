@@ -16,6 +16,9 @@ pg.setConfigOptions(
 )
 
 
+# Left axis width shared with the analog plot (x-linked plots align by screen position)
+LEFT_AXIS_WIDTH = 70
+
 # Color palette for multi-channel overlay
 CHANNEL_COLORS = [
     "#1f77b4",  # Blue
@@ -81,6 +84,8 @@ class TimeSeriesPlot(QWidget):
         self._plot.setLabel("bottom", "Time", units="s")
         self._plot.setLabel("left", "Amplitude")
         self._plot.showGrid(x=True, y=True, alpha=0.3)
+        # Fixed axis width so the linked analog plot lines up in time
+        self._plot.getAxis("left").setWidth(LEFT_AXIS_WIDTH)
 
         # Enable mouse interaction
         self._plot.setMouseEnabled(x=True, y=True)
@@ -93,6 +98,10 @@ class TimeSeriesPlot(QWidget):
         # PanMode: left-drag = pan, right-drag = zoom rect, scroll = zoom
         vb = self._plot.getViewBox()
         vb.setMouseMode(pg.ViewBox.PanMode)
+
+    def plot_item(self) -> pg.PlotItem:
+        """The underlying PlotItem (used to link other plots' x-axes)."""
+        return self._plot
 
     def _on_range_changed(self, view_box, ranges):
         """Handle view range changes."""

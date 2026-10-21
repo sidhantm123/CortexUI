@@ -53,15 +53,16 @@ class ChannelGroupWidget(QWidget):
 
     assignment_changed = Signal()
 
-    def __init__(self, num_channels: int, parent=None):
+    def __init__(self, channels: List[int], parent=None):
         super().__init__(parent)
-        self._num_channels = num_channels
+        self._channels = list(channels)  # channel indices offered for grouping
+        self._num_channels = len(self._channels)
 
         # State
         self._subgroups: List[str] = []  # subgroup labels
         self._active_subgroup: Optional[int] = None  # index into _subgroups
         self._assignments: Dict[int, Optional[int]] = {
-            i: None for i in range(num_channels)
+            ch: None for ch in self._channels
         }  # channel -> subgroup index or None
         self._channel_buttons: Dict[int, QPushButton] = {}
         self._subgroup_buttons: List[QPushButton] = []
@@ -107,15 +108,15 @@ class ChannelGroupWidget(QWidget):
         self._ch_grid.setContentsMargins(2, 2, 2, 2)
 
         cols = 8
-        for i in range(self._num_channels):
-            btn = QPushButton(str(i + 1))  # 1-indexed display
+        for pos, ch in enumerate(self._channels):
+            btn = QPushButton(str(ch + 1))  # 1-indexed display
             btn.setFixedSize(45, 28)
             btn.setCheckable(False)
             btn.setStyleSheet(self._channel_style(None))
-            btn.clicked.connect(lambda checked, ch=i: self._on_channel_clicked(ch))
-            row, col = divmod(i, cols)
+            btn.clicked.connect(lambda checked, ch=ch: self._on_channel_clicked(ch))
+            row, col = divmod(pos, cols)
             self._ch_grid.addWidget(btn, row, col)
-            self._channel_buttons[i] = btn
+            self._channel_buttons[ch] = btn
 
         ch_scroll.setWidget(ch_container)
         layout.addWidget(ch_scroll)
@@ -227,7 +228,7 @@ class ChannelGroupWidget(QWidget):
 
     def reset(self):
         """Clear all assignments and subgroups, returning widget to initial state."""
-        for ch in range(self._num_channels):
+        for ch in self._channels:
             self._assignments[ch] = None
             self._channel_buttons[ch].setStyleSheet(self._channel_style(None))
 
@@ -249,7 +250,7 @@ class ChannelGroupWidget(QWidget):
                 self._on_add_subgroup()
 
             for ch in group:
-                if 0 <= ch < self._num_channels:
+                if ch in self._assignments:
                     self._assignments[ch] = i
                     self._channel_buttons[ch].setStyleSheet(
                         self._channel_style(i)
@@ -267,7 +268,7 @@ class FilterEditDialog(QDialog):
         parent=None,
         filter_config: Optional[FilterConfig] = None,
         sample_rate: float = 24000,
-        num_channels: int = 1,
+        channels: Optional[List[int]] = None,
         probe: Optional[ProbeGeometry] = None,
     ):
         super().__init__(parent)
@@ -275,7 +276,7 @@ class FilterEditDialog(QDialog):
         self.setMinimumWidth(300)
 
         self._sample_rate = sample_rate
-        self._num_channels = num_channels
+        self._channels = list(channels) if channels is not None else [0]
         self._config = filter_config
         self._probe = probe
 
@@ -352,7 +353,7 @@ class FilterEditDialog(QDialog):
         layout.addLayout(form)
 
         # Channel group widget (for CAR/CMR)
-        self._group_widget = ChannelGroupWidget(self._num_channels, self)
+        self._group_widget = ChannelGroupWidget(self._channels, self)
         self._group_widget.assignment_changed.connect(self._on_assignment_changed)
         self._group_widget.setVisible(False)
         layout.addWidget(self._group_widget)
@@ -458,7 +459,7 @@ class FilterEditDialog(QDialog):
         shank_groups = self._probe.get_shank_groups()
         # Build list of channel lists in sorted shank order, filtered to valid channels
         groups = [
-            [ch for ch in chs if ch < self._num_channels]
+            [ch for ch in chs if ch in self._channels]
             for chs in shank_groups.values()
         ]
         groups = [g for g in groups if g]  # drop empty groups
@@ -641,7 +642,7 @@ class FilterPanel(QWidget):
         dialog = FilterEditDialog(
             self,
             sample_rate=self._state.sample_rate,
-            num_channels=self._state.num_channels,
+            channels=self._state.neural_channels(),
             probe=self._probe,
         )
         if dialog.exec() == QDialog.DialogCode.Accepted:
@@ -669,7 +670,7 @@ class FilterPanel(QWidget):
                 self,
                 filter_config=config,
                 sample_rate=self._state.sample_rate,
-                num_channels=self._state.num_channels,
+                channels=self._state.neural_channels(),
                 probe=self._probe,
             )
             if dialog.exec() == QDialog.DialogCode.Accepted:

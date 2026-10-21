@@ -46,6 +46,7 @@ class ControlPanel(QWidget):
         super().__init__(parent)
         self._setup_ui()
         self._state: Optional[StreamState] = None
+        self._neural: List[int] = []  # spinbox position -> channel index
 
     def _setup_ui(self):
         """Set up the widget layout."""
@@ -188,19 +189,27 @@ class ControlPanel(QWidget):
         """Set the stream state to display."""
         self._state = state
 
+        # Only electrodes are offered; analog inputs have their own viewer
+        self._neural = state.neural_channels()
+        n_analog = len(state.analog_channels)
+
         # Update stream info
         self._stream_info_label.setText(
             f"{state.stream_name}\n"
-            f"{state.num_channels} ch @ {state.sample_rate:.0f} Hz"
+            f"{len(self._neural)} ch @ {state.sample_rate:.0f} Hz"
+            + (f" (+{n_analog} analog)" if n_analog else "")
         )
 
         # Update channel selector range
-        self._channel_spin.setMaximum(state.num_channels)
-        self._channel_spin.setValue(state.selected_channel + 1)
+        self._channel_spin.blockSignals(True)
+        self._channel_spin.setMaximum(max(1, len(self._neural)))
+        if state.selected_channel in self._neural:
+            self._channel_spin.setValue(self._neural.index(state.selected_channel) + 1)
+        self._channel_spin.blockSignals(False)
 
         # Update overlay channel combo
         self._add_channel_combo.clear()
-        for i in range(state.num_channels):
+        for i in self._neural:
             self._add_channel_combo.addItem(state.channel_label(i), i)
 
         # Update mode
@@ -256,9 +265,12 @@ class ControlPanel(QWidget):
 
     def _on_single_channel_changed(self, value: int):
         """Handle single channel selection change."""
+        if not 0 < value <= len(self._neural):
+            return
+        channel = self._neural[value - 1]
         if self._state:
-            self._state.selected_channel = value - 1
-        self.single_channel_changed.emit(value - 1)
+            self._state.selected_channel = channel
+        self.single_channel_changed.emit(channel)
 
     def _on_add_channel(self):
         """Handle add channel button click."""

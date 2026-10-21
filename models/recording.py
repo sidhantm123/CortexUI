@@ -14,6 +14,7 @@ class StreamInfo:
     num_samples: int
     dtype: str
     channel_labels: Optional[List[str]] = None  # One per channel, if the format provides them
+    analog_channels: List[int] = field(default_factory=list)  # Indices of analog inputs (not electrodes)
 
 
 @dataclass

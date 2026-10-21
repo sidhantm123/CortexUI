@@ -62,7 +62,7 @@ class ExportBinaryDialog(QDialog):
             f"Currently displayed  (Ch {displayed_str})"
         )
         self._ch_all = QRadioButton(
-            f"All channels  ({self._state.num_channels} total)"
+            f"All channels  ({len(self._state.neural_channels())} total)"
         )
         self._ch_select = QRadioButton("Select channels:")
 
@@ -79,7 +79,7 @@ class ExportBinaryDialog(QDialog):
         self._ch_list = QListWidget()
         self._ch_list.setMaximumHeight(100)
         self._ch_list.setEnabled(False)
-        for i in range(self._state.num_channels):
+        for i in self._state.neural_channels():
             item = QListWidgetItem(self._state.channel_label(i, "Channel"))
             item.setData(Qt.ItemDataRole.UserRole, i)
             item.setCheckState(
@@ -148,7 +148,7 @@ class ExportBinaryDialog(QDialog):
         if self._ch_displayed.isChecked():
             channels = self._state.get_active_channels()
         elif self._ch_all.isChecked():
-            channels = list(range(self._state.num_channels))
+            channels = self._state.neural_channels()
         else:
             channels = [
                 self._ch_list.item(i).data(Qt.ItemDataRole.UserRole)

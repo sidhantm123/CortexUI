@@ -31,6 +31,7 @@ from core.workers import (
     DataLoadWorker,
     FilterWorker,
     SpectralWorker,
+    EventDetectWorker,
 )
 from models import StreamState, ChannelMode
 from dsp import apply_filter_chain, decimate_for_display
@@ -42,6 +43,19 @@ from .filter_panel import FilterPanel
 from .spectrum_panel import SpectrumPanel
 from .plot_widget import TimeSeriesPlot, SpectrumPlot
 from .probe_map_widget import ProbeMapWidget
+from .analog_plot import AnalogPlot
+from .analog_panel import AnalogPanel
+
+
+def _placeholder_tab(text: str) -> QWidget:
+    """Empty tab for a feature that is coming in a later step."""
+    widget = QWidget()
+    layout = QVBoxLayout(widget)
+    label = QLabel(text)
+    label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+    label.setStyleSheet("color: gray;")
+    layout.addWidget(label)
+    return widget
 
 
 class MainWindow(QMainWindow):
@@ -85,6 +99,16 @@ class MainWindow(QMainWindow):
         # Pending operations
         self._pending_refresh = False
 
+        # Analog viewer buffer (one analog channel, wider than its visible view)
+        self._analog_key = None  # (stream, channel) in the buffer
+        self._analog_data: Optional[np.ndarray] = None
+        self._analog_time: Optional[np.ndarray] = None
+        self._analog_buf = (-1.0, -1.0)
+        self._analog_seq: int = 0
+        self._pending_analog_refresh = False
+        self._analog_workers = WorkerManager()
+        self._detect_worker: Optional[EventDetectWorker] = None
+
         self._setup_ui()
         self._setup_menu()
         self._setup_statusbar()
@@ -126,7 +150,14 @@ class MainWindow(QMainWindow):
         self._spectrum_plot = SpectrumPlot()
         self._plot_tabs.addTab(self._spectrum_plot, "Spectrum")
 
-        center_layout.addWidget(self._plot_tabs)
+        # Analog viewer below the main plot
+        self._analog_plot = AnalogPlot()
+
+        center_splitter = QSplitter(Qt.Orientation.Vertical)
+        center_splitter.addWidget(self._plot_tabs)
+        center_splitter.addWidget(self._analog_plot)
+        center_splitter.setSizes([650, 280])
+        center_layout.addWidget(center_splitter)
         self._main_splitter.addWidget(center_widget)
 
         # Right panel: Controls
@@ -136,14 +167,23 @@ class MainWindow(QMainWindow):
 
         # Right tabs for different control groups
         self._control_tabs = QTabWidget()
+        self._control_tabs.setUsesScrollButtons(True)
 
         # Channel control tab
         self._control_panel = ControlPanel()
         self._control_tabs.addTab(self._control_panel, "Channels")
 
+        # Blanking tab (later step)
+        self._control_tabs.addTab(_placeholder_tab("Blanking — coming in a later step"), "Blanking")
+
         # Filter tab
         self._filter_panel = FilterPanel()
         self._control_tabs.addTab(self._filter_panel, "Filters")
+
+        # Spike detection tab (later step)
+        self._control_tabs.addTab(
+            _placeholder_tab("Spike Detection — coming in a later step"), "Spike Detection"
+        )
 
         # Spectrum analysis tab
         self._spectrum_panel = SpectrumPanel()
@@ -153,14 +193,23 @@ class MainWindow(QMainWindow):
         self._probe_map = ProbeMapWidget()
         self._control_tabs.addTab(self._probe_map, "Probe Map")
 
-        right_layout.addWidget(self._control_tabs)
+        # Analog channel controls below the control tabs
+        self._analog_tabs = QTabWidget()
+        self._analog_panel = AnalogPanel(self._app_state)
+        self._analog_tabs.addTab(self._analog_panel, "Analog Ch.")
 
-        right_widget.setMaximumWidth(300)
+        right_splitter = QSplitter(Qt.Orientation.Vertical)
+        right_splitter.addWidget(self._control_tabs)
+        right_splitter.addWidget(self._analog_tabs)
+        right_splitter.setSizes([520, 400])
+        right_layout.addWidget(right_splitter)
+
+        right_widget.setMaximumWidth(380)
         right_widget.setMinimumWidth(200)
         self._main_splitter.addWidget(right_widget)
 
         # Set splitter sizes
-        self._main_splitter.setSizes([200, 700, 280])
+        self._main_splitter.setSizes([200, 700, 340])
 
         main_layout.addWidget(self._main_splitter)
 
@@ -273,6 +322,16 @@ class MainWindow(QMainWindow):
         self._time_plot.view_range_changed.connect(self._on_plot_view_changed)
         self._time_plot.region_selected.connect(self._spectrum_panel.update_interval)
 
+        # Analog viewer
+        self._analog_plot.set_x_link(self._time_plot.plot_item())
+        self._analog_plot.view_range_changed.connect(self._on_analog_view_changed)
+        self._analog_panel.sync_changed.connect(self._on_analog_sync_changed)
+        self._analog_panel.channel_selected.connect(self._on_analog_channel_selected)
+        self._analog_panel.analog_list_changed.connect(self._on_analog_list_changed)
+        self._analog_panel.assignments_changed.connect(self._update_analog_events)
+        self._analog_panel.detect_requested.connect(self._on_detect_events)
+        self._analog_panel.event_selected.connect(self._on_event_selected)
+
     def _on_open_folder(self):
         """Handle open folder action."""
         folder = QFileDialog.getExistingDirectory(
@@ -304,6 +363,7 @@ class MainWindow(QMainWindow):
                 first_stream = list(block.streams.keys())[0]
                 self._on_stream_selected(first_stream)
 
+            self._reset_analog_view()
             self._update_status()
 
         except Exception as e:
@@ -344,6 +404,7 @@ class MainWindow(QMainWindow):
             self._control_panel.set_state(state)
             self._filter_panel.set_state(state)
             self._spectrum_panel.set_state(state)
+            self._analog_panel.refresh()
 
             # Load and display data
             self._refresh_plot()
@@ -692,6 +753,220 @@ class MainWindow(QMainWindow):
         else:
             self._filter_indicator.setText("")
 
+    # ------------------------------------------------------------------ analog viewer
+
+    def _reset_analog_view(self):
+        """After a recording or session loads: rebuild the analog panel and plot."""
+        self._analog_key = None
+        self._analog_data = None
+        self._analog_time = None
+        self._analog_panel.refresh()
+        self._analog_panel.set_summary("")
+        self._analog_plot.highlight_event(None)
+        self._update_analog_events()
+        state = self._app_state.get_current_state()
+        if state is not None:
+            self._analog_plot.set_view_range(*state.get_view_range())
+        self._refresh_analog()
+
+    def _update_analog_events(self):
+        """Redraw event markers on the analog plot."""
+        self._analog_plot.set_events(
+            self._app_state.events, self._app_state.modality_names()
+        )
+        self._update_analog_title()
+
+    def _update_analog_title(self):
+        key = self._analog_panel.selected_channel()
+        if key is None:
+            self._analog_plot.set_title("No analog channels")
+            return
+        state = self._app_state.stream_states[key[0]]
+        label = state.channel_label(key[1])
+        assignment = self._app_state.analog_assignments.get(key)
+        self._analog_plot.set_title(
+            f"{label} — {assignment.modality}" if assignment else label
+        )
+
+    @Slot(bool)
+    def _on_analog_sync_changed(self, synced: bool):
+        if synced:
+            self._analog_plot.set_x_link(self._time_plot.plot_item())
+            state = self._app_state.get_current_state()
+            if state is not None:
+                self._analog_plot.set_view_range(*state.get_view_range())
+        else:
+            self._analog_plot.set_x_link(None)
+
+    @Slot()
+    def _on_analog_channel_selected(self):
+        self._update_analog_title()
+        self._analog_plot.highlight_event(None)
+        self._refresh_analog()
+
+    @Slot(str)
+    def _on_analog_list_changed(self, stream_name: str):
+        """Analog channels of a stream were edited: refresh the electrode lists too."""
+        state = self._app_state.get_stream_state(stream_name)
+        if state is not None and stream_name == self._app_state.current_stream:
+            self._control_panel.set_state(state)
+            self._spectrum_panel.set_state(state)
+            self._last_plot_channels = []
+            self._buffer_channels = []
+            self._refresh_plot()
+        self._update_analog_events()
+        self._refresh_analog()
+
+    @Slot(object, object)
+    def _on_analog_view_changed(self, start: float, end: float):
+        """Analog plot moved (linked to the main plot, or panned on its own)."""
+        if self._analog_buffer_covers(self._analog_panel.selected_channel(), start, end):
+            self._render_analog(start, end)
+        elif not self._pending_analog_refresh:
+            self._pending_analog_refresh = True
+            QTimer.singleShot(150, self._delayed_analog_refresh)
+
+    def _delayed_analog_refresh(self):
+        self._pending_analog_refresh = False
+        self._refresh_analog()
+
+    def _analog_buffer_covers(self, key, start: float, end: float) -> bool:
+        return (
+            key is not None
+            and key == self._analog_key
+            and self._analog_data is not None
+            and start >= self._analog_buf[0]
+            and end <= self._analog_buf[1]
+        )
+
+    def _refresh_analog(self):
+        """Show the selected analog channel for the analog plot's current view."""
+        key = self._analog_panel.selected_channel()
+        if key is None or self._app_state.block is None:
+            self._analog_plot.set_data(None, None)
+            self._update_analog_title()
+            return
+
+        start, end = self._analog_plot.get_view_range()
+        if self._analog_buffer_covers(key, start, end):
+            self._render_analog(start, end)
+            return
+
+        stream, channel = key
+        duration = self._app_state.stream_states[stream].duration
+        view_dur = max(end - start, 1.0)
+        buf_start = max(0.0, start - view_dur)
+        buf_end = min(duration, end + view_dur)
+        if buf_end <= buf_start:
+            self._analog_plot.set_data(None, None)
+            return
+
+        self._analog_workers.cancel_all()
+        self._analog_seq += 1
+        seq = self._analog_seq
+        worker = DataLoadWorker(
+            self._app_state.reader, stream, [channel], buf_start, buf_end
+        )
+        worker.signals.result.connect(
+            lambda result, s=seq, k=key, b=(buf_start, buf_end): self._on_analog_loaded(result, s, k, b)
+        )
+        worker.signals.error.connect(
+            lambda err: self._status_label.setText(f"Error loading analog data: {err}")
+        )
+        self._analog_workers.submit(worker)
+
+    def _on_analog_loaded(self, result: dict, seq: int, key, buf):
+        if seq != self._analog_seq:
+            return
+        self._analog_key = key
+        self._analog_data = np.ravel(result["data"])
+        self._analog_time = result["time"]
+        self._analog_buf = buf
+        self._render_analog(*self._analog_plot.get_view_range())
+
+    def _render_analog(self, start: float, end: float):
+        time, data = self._analog_time, self._analog_data
+        if time is None or data is None:
+            return
+        i0 = int(np.searchsorted(time, start, side="left"))
+        i1 = int(np.searchsorted(time, end, side="right"))
+        if i1 <= i0:
+            self._analog_plot.set_data(None, None)
+            return
+        data_view, time_view = data[i0:i1], time[i0:i1]
+        if data_view.size > self.MAX_PLOT_POINTS:
+            data_view, time_view = decimate_for_display(
+                data_view, time_view, target_points=self.MAX_PLOT_POINTS
+            )
+        self._analog_plot.set_data(data_view, time_view)
+
+    @Slot(object)
+    def _on_event_selected(self, event):
+        """Jump to an event: the main plot (and the analog plot, when not synced)."""
+        pad = 0.25 * event.duration
+        start, end = event.onset - pad, event.offset + pad
+        if end - start < 0.05:
+            mid = (event.onset + event.offset) / 2
+            start, end = mid - 0.025, mid + 0.025
+        start = max(0.0, start)
+
+        self._analog_plot.highlight_event(event)
+        if self._app_state.get_current_state() is not None:
+            self._on_view_range_requested(start, end)
+        if not self._analog_panel.is_synced():
+            self._analog_plot.set_view_range(start, end)
+
+    @Slot()
+    def _on_detect_events(self):
+        """Detect events on every assigned analog channel (runs in the background)."""
+        assignments = list(self._app_state.analog_assignments.values())
+        if not assignments or self._app_state.block is None:
+            return
+
+        streams = {a.stream for a in assignments}
+        stream_info = {
+            s: (self._app_state.stream_states[s].sample_rate, self._app_state.stream_states[s].duration)
+            for s in streams
+        }
+        labels = {
+            (a.stream, a.channel): self._app_state.stream_states[a.stream].channel_labels[a.channel]
+            if self._app_state.stream_states[a.stream].channel_labels
+            else f"Ch {a.channel + 1}"
+            for a in assignments
+        }
+
+        progress = QProgressDialog("Reading analog channels and detecting events...", "Cancel", 0, 100, self)
+        progress.setWindowModality(Qt.WindowModality.WindowModal)
+        progress.setMinimumDuration(0)
+
+        worker = EventDetectWorker(self._app_state.reader, assignments, stream_info, labels)
+        worker.signals.progress.connect(progress.setValue)
+        progress.canceled.connect(worker.cancel)
+
+        def done(result):
+            progress.close()
+            self._app_state.events = result["events"]
+            lines = [
+                f"{label} → {modality}: {count} events (threshold {thr * 1e3:.3g} mV)"
+                for label, modality, thr, count in result["summary"]
+            ]
+            self._analog_panel.set_summary("\n".join(lines))
+            self._analog_panel.refresh()
+            self._update_analog_events()
+            self._status_label.setText(f"Detected {len(result['events'])} events")
+
+        def failed(err):
+            progress.close()
+            QMessageBox.warning(self, "Event Detection Error", f"Failed to detect events:\n\n{err}")
+
+        worker.signals.result.connect(done)
+        worker.signals.error.connect(failed)
+        worker.signals.cancelled.connect(progress.close)
+        # Not submitted to _worker_manager: plot refreshes call cancel_all() on it
+        self._detect_worker = worker
+        self._worker_manager.thread_pool.start(worker)
+        progress.show()
+
     def _update_status(self):
         """Update status bar."""
         state = self._app_state.get_current_state()
@@ -758,6 +1033,8 @@ class MainWindow(QMainWindow):
                     if self._app_state.current_stream:
                         self._stream_panel.select_stream(self._app_state.current_stream)
                         self._on_stream_selected(self._app_state.current_stream)
+
+                self._reset_analog_view()
 
                 # Restore probe geometry if it was saved with the session
                 if self._app_state.probe is not None:
@@ -1059,5 +1336,9 @@ class MainWindow(QMainWindow):
         """Handle window close."""
         # Cancel any running workers
         self._worker_manager.cancel_all()
+        self._analog_workers.cancel_all()
+        if self._detect_worker is not None:
+            self._detect_worker.cancel()
+        self._worker_manager.wait_all(3000)
         self._app_state.close()
         event.accept()

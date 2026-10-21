@@ -341,6 +341,87 @@ class DecimationWorker(CancellableWorker):
             self.signals.error.emit(str(e))
 
 
+class EventDetectWorker(CancellableWorker):
+    """
+    Detect stimulation events on assigned analog channels.
+
+    Each stream's assigned lines are read together, in sequential chunks, so the
+    file is scanned once per stream.
+
+    Emits result as dict with:
+        - 'events': list of StimEvent (numbered per modality)
+        - 'summary': list of (label, modality, threshold in volts, event count)
+    """
+
+    CHUNK_SECONDS = 60.0
+
+    def __init__(self, reader, assignments, stream_info: dict, labels: dict):
+        """
+        Args:
+            reader: Recording reader with get_stream_data().
+            assignments: List of AnalogAssignment.
+            stream_info: stream name -> (sample_rate, duration).
+            labels: (stream, channel) -> display label.
+        """
+        super().__init__()
+        self.reader = reader
+        self.assignments = list(assignments)
+        self.stream_info = stream_info
+        self.labels = labels
+
+    @Slot()
+    def run(self):
+        from dsp.events import detect_line_events
+        from models.analog import StimEvent, number_events
+
+        self.signals.started.emit()
+        try:
+            by_stream = {}
+            for a in self.assignments:
+                by_stream.setdefault(a.stream, []).append(a)
+
+            total = sum(self.stream_info[s][1] for s in by_stream) or 1.0
+            done = 0.0
+            events, summary = [], []
+
+            for stream, items in by_stream.items():
+                fs, duration = self.stream_info[stream]
+                channels = [a.channel for a in items]
+                chunks = []
+                t = 0.0
+                while t < duration:
+                    if self.is_cancelled():
+                        self.signals.cancelled.emit()
+                        return
+                    t_end = min(duration, t + self.CHUNK_SECONDS)
+                    data, _ = self.reader.get_stream_data(
+                        stream, channels=channels, start_time=t, end_time=t_end
+                    )
+                    chunks.append(np.atleast_2d(data).astype(np.float32))
+                    done += t_end - t
+                    t = t_end
+                    self.signals.progress.emit(int(90 * done / total))
+                lines = np.concatenate(chunks, axis=1)
+                del chunks
+
+                for row, a in enumerate(items):
+                    label = self.labels.get((stream, a.channel), f"Ch {a.channel + 1}")
+                    onsets, offsets, thr = detect_line_events(lines[row], fs, a.settings)
+                    summary.append((label, a.modality, thr, len(onsets)))
+                    events += [
+                        StimEvent(a.modality, 0, float(on), float(off), stream, a.channel, label)
+                        for on, off in zip(onsets, offsets)
+                    ]
+                del lines
+
+            self.signals.progress.emit(100)
+            self.signals.result.emit({"events": number_events(events), "summary": summary})
+            self.signals.finished.emit()
+
+        except Exception as e:
+            self.signals.error.emit(str(e))
+
+
 class WorkerManager:
     """Manages worker threads and provides cancellation."""
 

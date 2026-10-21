@@ -4,6 +4,7 @@ from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 import numpy as np
 
+from models.analog import is_analog_label
 from models.recording import StreamInfo, RecordingBlock
 from .ccf_reader import read_ccf, ccf_labels, find_ccf
 
@@ -125,6 +126,10 @@ class BlackrockReader:
                     ccf_label_map.get(_int_or_none(ch_id), name) or name
                     for name, ch_id in zip(channels["name"], channels["id"])
                 ]
+                analog = [
+                    i for i, (label, ch_id) in enumerate(zip(labels, channels["id"]))
+                    if is_analog_label(label, _int_or_none(ch_id))
+                ]
                 to_volts = np.array(
                     [_UNIT_TO_VOLTS.get(str(u).strip().lower(), 1.0) for u in channels["units"]]
                 )
@@ -153,6 +158,7 @@ class BlackrockReader:
                         num_samples=n_samples,
                         dtype="int16",
                         channel_labels=list(labels),
+                        analog_channels=list(analog),
                     )
 
         if not streams:

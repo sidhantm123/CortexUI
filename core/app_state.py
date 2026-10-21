@@ -1,10 +1,11 @@
 """Application state management."""
 import json
 from pathlib import Path
-from typing import Dict, Optional, List, Callable
+from typing import Dict, Optional, List, Callable, Tuple
 from dataclasses import dataclass, field
 
 from models import StreamState
+from models.analog import AnalogAssignment, StimEvent, MODALITY_PRESETS
 from models.probe import ProbeGeometry
 from models.recording import RecordingBlock
 from tdt_io import TDTReader
@@ -34,6 +35,13 @@ class AppState:
 
     # Current selection
     current_stream: Optional[str] = None
+
+    # Analog channel -> modality assignments, keyed by (stream, channel index)
+    analog_assignments: Dict[Tuple[str, int], AnalogAssignment] = field(default_factory=dict)
+    # Modality names the user added beyond the presets
+    custom_modalities: List[str] = field(default_factory=list)
+    # Detected stimulation events (numbered per modality)
+    events: List[StimEvent] = field(default_factory=list)
 
     # Callbacks for state changes
     _on_block_loaded: List[Callable] = field(default_factory=list)
@@ -68,6 +76,7 @@ class AppState:
                 sample_rate=info.sample_rate,
                 duration=info.duration,
                 channel_labels=info.channel_labels,
+                analog_channels=list(info.analog_channels),
             )
 
         # Select first stream by default
@@ -131,6 +140,43 @@ class AppState:
         self.probe = None
         self.stream_states.clear()
         self.current_stream = None
+        self.analog_assignments.clear()
+        self.events = []
+
+    def modality_names(self) -> List[str]:
+        """Preset modalities followed by the user's own."""
+        names = list(MODALITY_PRESETS)
+        names += [m for m in self.custom_modalities if m not in names]
+        return names
+
+    def analog_channel_list(self) -> List[Tuple[str, int]]:
+        """Every analog channel in the recording as (stream, channel index)."""
+        return [
+            (name, ch)
+            for name, state in self.stream_states.items()
+            for ch in state.analog_channels
+        ]
+
+    def set_assignment(self, stream: str, channel: int, assignment: Optional[AnalogAssignment]):
+        """Assign (or with None, unassign) an analog channel."""
+        if assignment is None:
+            self.analog_assignments.pop((stream, channel), None)
+        else:
+            self.analog_assignments[(stream, channel)] = assignment
+            if assignment.modality not in self.modality_names():
+                self.custom_modalities.append(assignment.modality)
+
+    def set_analog_channels(self, stream: str, channels: List[int]):
+        """Change which channels of a stream are analog; drops assignments that no longer apply."""
+        state = self.stream_states[stream]
+        state.set_analog_channels(channels)
+        for key in [k for k in self.analog_assignments if k[0] == stream]:
+            if key[1] not in state.analog_channels:
+                del self.analog_assignments[key]
+        self.events = [
+            e for e in self.events
+            if (e.stream, e.channel) in self.analog_assignments
+        ]
 
     def save_session(self, filepath: str):
         """
@@ -150,6 +196,9 @@ class AppState:
                 name: state.to_dict()
                 for name, state in self.stream_states.items()
             },
+            "custom_modalities": self.custom_modalities,
+            "analog_assignments": [a.to_dict() for a in self.analog_assignments.values()],
+            "events": [e.to_dict() for e in self.events],
         }
 
         with open(filepath, "w") as f:
@@ -181,6 +230,8 @@ class AppState:
                 current = self.stream_states[name]
 
                 # Copy over user settings, keep hardware info from actual data
+                if "analog_channels" in state_dict:
+                    current.set_analog_channels(saved.analog_channels)
                 current.channel_mode = saved.channel_mode
                 current.selected_channel = min(
                     saved.selected_channel, current.num_channels - 1
@@ -189,8 +240,7 @@ class AppState:
                     c for c in saved.overlay_channels
                     if c < current.num_channels
                 ]
-                if not current.overlay_channels:
-                    current.overlay_channels = [0]
+                current.set_analog_channels(current.analog_channels)
                 current.view_start = saved.view_start
                 current.view_end = min(saved.view_end, current.duration)
                 current.filters = saved.filters
@@ -204,6 +254,18 @@ class AppState:
                 ]
                 current.psd_nperseg = saved.psd_nperseg
                 current.psd_overlap = saved.psd_overlap
+
+        # Restore analog assignments and detected events
+        self.custom_modalities = list(session.get("custom_modalities", []))
+        for a_dict in session.get("analog_assignments", []):
+            a = AnalogAssignment.from_dict(a_dict)
+            state = self.stream_states.get(a.stream)
+            if state is not None and a.channel in state.analog_channels:
+                self.analog_assignments[(a.stream, a.channel)] = a
+        self.events = [
+            e for e in (StimEvent.from_dict(d) for d in session.get("events", []))
+            if (e.stream, e.channel) in self.analog_assignments
+        ]
 
         # Restore probe geometry (optional — missing key or None is fine)
         probe_dict = session.get("probe")

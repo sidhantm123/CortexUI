@@ -22,6 +22,9 @@ class StreamState:
     # Hardware channel names (from the recording; not persisted)
     channel_labels: Optional[List[str]] = None
 
+    # Analog input channels (stimulus lines etc.); excluded from neural channel lists and CAR/CMR
+    analog_channels: List[int] = field(default_factory=list)
+
     # Channel selection
     channel_mode: ChannelMode = ChannelMode.SINGLE
     selected_channel: int = 0  # For single mode
@@ -53,8 +56,26 @@ class StreamState:
         """Initialize view_end based on duration if needed."""
         if self.view_end > self.duration:
             self.view_end = min(10.0, self.duration)
+        self._drop_analog_from_selection()
+
+    def neural_channels(self) -> List[int]:
+        """Channel indices that are electrodes, i.e. everything except analog inputs."""
+        analog = set(self.analog_channels)
+        return [c for c in range(self.num_channels) if c not in analog]
+
+    def set_analog_channels(self, channels: List[int]):
+        """Replace the analog channel list and keep the neural selection valid."""
+        self.analog_channels = sorted(c for c in set(channels) if 0 <= c < self.num_channels)
+        self._drop_analog_from_selection()
+
+    def _drop_analog_from_selection(self):
+        neural = self.neural_channels()
+        first = neural[0] if neural else 0
+        if self.selected_channel not in neural:
+            self.selected_channel = first
+        self.overlay_channels = [c for c in self.overlay_channels if c in neural]
         if not self.overlay_channels and self.num_channels > 0:
-            self.overlay_channels = [0]
+            self.overlay_channels = [first]
 
     def channel_label(self, channel: int, prefix: str = "Ch") -> str:
         """Display name for a 0-based channel, e.g. "Ch 3" or "Ch 3 (elec3)"."""
@@ -119,6 +140,7 @@ class StreamState:
             "num_channels": self.num_channels,
             "sample_rate": self.sample_rate,
             "duration": self.duration,
+            "analog_channels": self.analog_channels,
             "channel_mode": self.channel_mode.value,
             "selected_channel": self.selected_channel,
             "overlay_channels": self.overlay_channels,
@@ -143,6 +165,7 @@ class StreamState:
             sample_rate=data["sample_rate"],
             duration=data["duration"],
         )
+        state.analog_channels = data.get("analog_channels", [])
         state.channel_mode = ChannelMode(data.get("channel_mode", "single"))
         state.selected_channel = data.get("selected_channel", 0)
         state.overlay_channels = data.get("overlay_channels", [0])
