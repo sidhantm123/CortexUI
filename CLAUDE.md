@@ -11,14 +11,14 @@ delete details that the code or git history already records.
 | | |
 |---|---|
 | Active branch | `NSP_Basic` (not pushed; branched from `main` @ `beb2da4`) |
-| Last commit | Add Blanking tab (step 2) — see `git log` |
+| Last commit | `e60ac42` Add Blanking tab for stimulation artifacts |
 | Tests | 78 passing: `tdtgui/bin/python -m unittest discover tests` |
 | Next step | **Step 3: Filters cleanup** (§4), after the user tests blanking |
 
 ### Done
 1. Analog input viewer and event detection (`78664d0`).
 2. Editable event onset/offset, by table cell or by dragging the line on the analog plot (`7b559ef`).
-3. Blanking tab: Basic (fixed pads) and Advanced (adaptive per-channel post-pad), Apply/Remove, applied before filters
+3. Blanking tab (`e60ac42`): Basic (fixed pads) and Advanced (adaptive per-channel post-pad), Apply/Remove, applied before filters
    everywhere, saved in the session.
 
 ### Branches
