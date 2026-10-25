@@ -11,7 +11,7 @@ delete details that the code or git history already records.
 | | |
 |---|---|
 | Active branch | `NSP_Basic` (not pushed; branched from `main` @ `beb2da4`) |
-| Last commit | Step 3: Vrms on visible clean data, Vrms threshold filter removed — see `git log` |
+| Last commit | `de192d3` Compute Vrms on visible clean data; remove the zeroing Vrms filter |
 | Tests | 78 passing: `tdtgui/bin/python -m unittest discover tests` |
 | Next step | **Step 4: Spike Detection tab** (§4), after the user tests step 3 |
 
@@ -20,7 +20,7 @@ delete details that the code or git history already records.
 2. Editable event onset/offset, by table cell or by dragging the line on the analog plot (`7b559ef`).
 3. Blanking tab (`e60ac42`): Basic (fixed pads) and Advanced (adaptive per-channel post-pad), Apply/Remove, applied before filters
    everywhere, saved in the session.
-4. Vrms is computed on the visible data with blanked samples excluded, and shown in the Time Series plot's top-right
+4. (`de192d3`) Vrms is computed on the visible data with blanked samples excluded, and shown in the Time Series plot's top-right
    corner (moved out of the Channels panel). The zeroing Vrms-threshold filter is removed; old sessions drop it with a
    message (`REMOVED_FILTER_TYPES`).
 
