@@ -11,9 +11,9 @@ delete details that the code or git history already records.
 | | |
 |---|---|
 | Active branch | `NSP_Basic` (not pushed; branched from `main` @ `beb2da4`) |
-| Last commit | `3507af0` Export binary at any processing stage, in chunks |
+| Last commit | `8722e70` Type export channels as ranges; warn about out-of-date blanking |
 | Tests | 93 passing: `tdtgui/bin/python -m unittest discover tests` |
-| Next step | **Step 4: Spike Detection tab** (§4), after the user tests export |
+| Next step | **Step 4: Spike Detection tab** (§4), after the user tests numbering + export |
 
 ### Done
 1. Analog input viewer and event detection (`78664d0`).
@@ -27,7 +27,7 @@ delete details that the code or git history already records.
    `ExportWorker`); "current view" now exports exactly the view (it used to write the ~3× buffer).
 6. (`50a7747`) Electrode numbering app-wide by default; View → Number Channels By → Electrode / Channel (saved in
    QSettings).
-7. Export dialog: typed channel selection (`ui/channel_spec.py`, in the active numbering, written ascending) with All
+7. (`8722e70`) Export dialog: typed channel selection (`ui/channel_spec.py`, in the active numbering, written ascending) with All
    Channels / Displayed buttons and a live preview, plus a warning when the applied blanking is stale.
 
 ### Branches
