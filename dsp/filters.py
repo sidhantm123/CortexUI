@@ -5,7 +5,7 @@ from scipy import signal
 
 from models.filter_config import FilterConfig, FilterType
 from .referencing import apply_car, apply_cmr
-from .metrics import compute_vrms, apply_vrms_threshold
+from .metrics import compute_vrms
 
 
 def design_filter(config: FilterConfig, fs: float) -> Optional[np.ndarray]:
@@ -115,7 +115,7 @@ def apply_filter_chain(
 
     Returns:
         Tuple of (filtered_data, warnings, vrms_dict).
-        vrms_dict is computed after all filters except VRMS_THRESHOLD.
+        vrms_dict is computed on the filtered output (whole buffer).
     """
     warnings: List[str] = []
 
@@ -137,8 +137,6 @@ def apply_filter_chain(
 
     # Keep a mutable copy of all-channel data for CAR/CMR updates
     all_data = all_channel_data.copy() if all_channel_data is not None else None
-
-    vrms_dict: Optional[Dict[int, float]] = None
 
     for filt in filters:
         if filt.bypassed:
@@ -162,16 +160,6 @@ def apply_filter_chain(
                 if ch_idx < all_data.shape[0]:
                     result[i] = all_data[ch_idx]
 
-        elif filt.filter_type == FilterType.VRMS_THRESHOLD:
-            # Compute Vrms BEFORE thresholding
-            vrms_dict = compute_vrms(result, channel_indices)
-            try:
-                result = apply_vrms_threshold(
-                    result, vrms_dict, channel_indices, filt.vrms_multiplier
-                )
-            except Exception as e:
-                warnings.append(f"{filt.get_display_name()} failed: {e}")
-
         else:
             # Standard SOS filter
             sos = design_filter(filt, fs)
@@ -187,9 +175,7 @@ def apply_filter_chain(
             except Exception as e:
                 warnings.append(f"Filter '{filt.get_display_name()}' failed: {e}")
 
-    # If no threshold filter was encountered, compute Vrms on final result
-    if vrms_dict is None:
-        vrms_dict = compute_vrms(result, channel_indices)
+    vrms_dict = compute_vrms(result, channel_indices)
 
     out = result[0] if was_1d else result
     return out, warnings, vrms_dict

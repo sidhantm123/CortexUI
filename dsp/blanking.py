@@ -160,6 +160,31 @@ def apply_blanking(
     return out[0] if was_1d else out
 
 
+def blank_mask(
+    time_axis: np.ndarray, channel_indices: Sequence[int], results: Iterable[BlankResult]
+) -> np.ndarray:
+    """Boolean (rows x samples) mask of blanked samples, for one buffer only (never a whole recording)."""
+    mask = np.zeros((len(channel_indices), time_axis.size), dtype=bool)
+    if time_axis.size == 0:
+        return mask
+    t0, t1 = time_axis[0], time_axis[-1]
+    row_of = {ch: i for i, ch in enumerate(channel_indices)}
+    for res in results:
+        if res.start_s.size == 0:
+            continue
+        for col, ch in enumerate(res.channels):
+            row = row_of.get(ch)
+            if row is None:
+                continue
+            starts, ends = res.start_s[:, col], res.end_s[:, col]
+            keep = (ends >= t0) & (starts <= t1)
+            for s, e in zip(starts[keep], ends[keep]):
+                i0 = int(np.searchsorted(time_axis, s, side="left"))
+                i1 = int(np.searchsorted(time_axis, e, side="right"))
+                mask[row, i0:i1] = True
+    return mask
+
+
 def blank_spans(results: Iterable[BlankResult], channels: Sequence[int],
                 start: float, end: float) -> List[Tuple[float, float]]:
     """Merged time spans in [start, end] blanked on any of the given channels (for shading)."""

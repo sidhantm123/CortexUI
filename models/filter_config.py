@@ -12,7 +12,11 @@ class FilterType(Enum):
     NOTCH = "notch"
     CAR = "car"
     CMR = "cmr"
-    VRMS_THRESHOLD = "vrms_threshold"
+
+
+# Filter types that no longer exist; sessions containing them load without them.
+# ("vrms_threshold" zeroed sub-threshold samples; thresholding now belongs to spike detection.)
+REMOVED_FILTER_TYPES = {"vrms_threshold"}
 
 
 @dataclass
@@ -30,9 +34,6 @@ class FilterConfig:
 
     # CAR/CMR: list of channel subgroups (0-indexed)
     channel_groups: Optional[List[List[int]]] = None
-
-    # Vrms threshold: multiplier
-    vrms_multiplier: float = 3.0
 
     def __post_init__(self):
         """Validate filter parameters."""
@@ -52,9 +53,6 @@ class FilterConfig:
                 raise ValueError(
                     "CAR/CMR requires channel_groups with at least one group of 2+ channels"
                 )
-        if self.filter_type == FilterType.VRMS_THRESHOLD:
-            if self.vrms_multiplier <= 0:
-                raise ValueError("Vrms multiplier must be > 0")
 
     def get_display_name(self) -> str:
         """Return human-readable filter description."""
@@ -72,8 +70,6 @@ class FilterConfig:
         elif self.filter_type == FilterType.CMR:
             n = len(self.channel_groups) if self.channel_groups else 0
             return f"CMR ({n} groups)"
-        elif self.filter_type == FilterType.VRMS_THRESHOLD:
-            return f"Vrms Thresh {self.vrms_multiplier:.1f}x"
         return "Unknown"
 
     def to_dict(self) -> dict:
@@ -88,7 +84,6 @@ class FilterConfig:
             "bypassed": self.bypassed,
             "uid": self.uid,
             "channel_groups": self.channel_groups,
-            "vrms_multiplier": self.vrms_multiplier,
         }
 
     @classmethod
@@ -104,5 +99,4 @@ class FilterConfig:
             bypassed=data.get("bypassed", False),
             uid=data.get("uid", str(uuid.uuid4())[:8]),
             channel_groups=data.get("channel_groups"),
-            vrms_multiplier=data.get("vrms_multiplier", 3.0),
         )

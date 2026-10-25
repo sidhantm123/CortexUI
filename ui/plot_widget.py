@@ -19,6 +19,19 @@ pg.setConfigOptions(
 # Left axis width shared with the analog plot (x-linked plots align by screen position)
 LEFT_AXIS_WIDTH = 70
 
+def format_volts(v: float) -> str:
+    """Readable Vrms: '83.5 µV', '--' for NaN."""
+    if v is None or not np.isfinite(v):
+        return "--"
+    if v < 1e-6:
+        return f"{v * 1e9:.1f} nV"
+    if v < 1e-3:
+        return f"{v * 1e6:.1f} µV"
+    if v < 1:
+        return f"{v * 1e3:.2f} mV"
+    return f"{v:.4f} V"
+
+
 # Most blanked spans shaded at once (only spans in view are passed in)
 MAX_BLANK_SPANS = 300
 
@@ -73,6 +86,15 @@ class TimeSeriesPlot(QWidget):
 
         # Shaded blanked spans
         self._blank_items: List[pg.LinearRegionItem] = []
+
+        # Vrms readout in the top-right corner (doesn't take mouse input)
+        vb = self._plot.getViewBox()
+        self._vrms_text = pg.TextItem("", anchor=(1, 0))
+        self._vrms_text.setParentItem(vb)
+        self._vrms_text.setAcceptedMouseButtons(Qt.MouseButton.NoButton)
+        self._vrms_text.setToolTip("Vrms of the visible data, blanked samples excluded")
+        vb.sigResized.connect(self._place_vrms_text)
+        self._place_vrms_text()
 
     def _setup_ui(self):
         """Set up the widget layout."""
@@ -196,6 +218,22 @@ class TimeSeriesPlot(QWidget):
         for i, ch_idx in enumerate(self._channel_indices):
             if ch_idx in self._plot_items and i < data.shape[0]:
                 self._plot_items[ch_idx].setData(time_axis, data[i])
+
+    def _place_vrms_text(self, *_):
+        self._vrms_text.setPos(self._plot.getViewBox().width() - 6, 4)
+
+    def set_vrms(self, entries: List[Tuple[str, float]]):
+        """Show 'name  Vrms' lines (in trace order and colors); NaN = fully blanked in view."""
+        lines = []
+        for i, (name, vrms) in enumerate(entries):
+            color = CHANNEL_COLORS[i % len(CHANNEL_COLORS)]
+            lines.append(
+                f'<span style="color:{color}; font-size:10pt;">{name}&nbsp;&nbsp;{format_volts(vrms)}</span>'
+            )
+        self._vrms_text.setHtml(
+            '<div style="background-color: rgba(255,255,255,190); text-align:right;">'
+            + "<br>".join(lines) + "</div>" if lines else ""
+        )
 
     def set_blank_spans(self, spans: List[Tuple[float, float]]):
         """Lightly shade blanked time spans (at most MAX_BLANK_SPANS)."""

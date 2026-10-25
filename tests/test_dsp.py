@@ -11,7 +11,7 @@ from dsp.filters import design_filter, apply_filter_chain, apply_filter
 from dsp.decimation import decimate_for_display, calculate_decimation_factor
 from dsp.spectral import compute_fft, compute_psd
 from dsp.referencing import apply_car, apply_cmr
-from dsp.metrics import compute_vrms, apply_vrms_threshold
+from dsp.metrics import compute_vrms
 from models.filter_config import FilterConfig, FilterType
 
 
@@ -411,17 +411,15 @@ class TestVrms(unittest.TestCase):
         self.assertAlmostEqual(vrms[0], 1.0, places=5)
         self.assertAlmostEqual(vrms[1], 2.0, places=5)
 
-    def test_threshold_zeros_small_values(self):
-        """Test that Vrms threshold zeros out sub-threshold points."""
-        data = np.array([[1.0, 0.01, -0.01, 5.0, -3.0]])
-        vrms = {0: 1.0}
-        # multiplier=1 → threshold = 1.0 → zero out |x| < 1
-        result = apply_vrms_threshold(data, vrms, [0], multiplier=1.0)
-        self.assertEqual(result[0, 0], 1.0)
-        self.assertEqual(result[0, 1], 0.0)
-        self.assertEqual(result[0, 2], 0.0)
-        self.assertEqual(result[0, 3], 5.0)
-        self.assertEqual(result[0, 4], -3.0)
+    def test_compute_vrms_excludes_masked_samples(self):
+        """Excluded (e.g. blanked) samples don't count; all-excluded gives NaN."""
+        data = np.array([np.r_[np.ones(100), 10 * np.ones(100)], np.ones(200)])
+        mask = np.zeros_like(data, dtype=bool)
+        mask[0, 100:] = True
+        mask[1, :] = True
+        vrms = compute_vrms(data, [4, 7], mask)
+        self.assertAlmostEqual(vrms[4], 1.0)
+        self.assertTrue(np.isnan(vrms[7]))
 
 
 class TestMixedFilterChain(unittest.TestCase):
@@ -466,24 +464,6 @@ class TestMixedFilterChain(unittest.TestCase):
         # Warnings should be empty for valid chain
         self.assertEqual(len(warnings), 0)
 
-    def test_chain_with_threshold(self):
-        """Test that Vrms is computed before thresholding."""
-        data = np.array([[1.0, 0.01, -0.01, 5.0, -3.0]] * 1000)
-        data = data.T  # (5, 1000) — but let's just use a simple 1-channel
-        data_1ch = np.array([np.concatenate([np.ones(500), 0.001 * np.ones(500)])])
-        filters = [
-            FilterConfig(FilterType.VRMS_THRESHOLD, vrms_multiplier=1.0),
-        ]
-
-        result, warnings, vrms = apply_filter_chain(
-            data_1ch, filters, 1000.0,
-            channel_indices=[0],
-        )
-
-        # vrms computed BEFORE threshold was applied
-        self.assertIn(0, vrms)
-        self.assertGreater(vrms[0], 0)
-
 
 class TestNewFilterConfigSerialization(unittest.TestCase):
     """Test serialization for new filter types."""
@@ -510,16 +490,9 @@ class TestNewFilterConfigSerialization(unittest.TestCase):
         self.assertEqual(restored.filter_type, FilterType.CMR)
         self.assertEqual(restored.channel_groups, [[0, 1], [2, 3]])
 
-    def test_vrms_threshold_serialization(self):
-        """Test Vrms threshold config round-trips through dict."""
-        config = FilterConfig(
-            filter_type=FilterType.VRMS_THRESHOLD,
-            vrms_multiplier=5.0,
-        )
-        data = config.to_dict()
-        restored = FilterConfig.from_dict(data)
-        self.assertEqual(restored.filter_type, FilterType.VRMS_THRESHOLD)
-        self.assertEqual(restored.vrms_multiplier, 5.0)
+    def test_removed_vrms_threshold_type(self):
+        """The zeroing Vrms threshold filter no longer exists."""
+        self.assertNotIn("vrms_threshold", [t.value for t in FilterType])
 
     def test_car_display_name(self):
         """Test CAR display name."""
@@ -530,16 +503,6 @@ class TestNewFilterConfigSerialization(unittest.TestCase):
         name = config.get_display_name()
         self.assertIn("CAR", name)
         self.assertIn("3", name)
-
-    def test_vrms_display_name(self):
-        """Test Vrms threshold display name."""
-        config = FilterConfig(
-            filter_type=FilterType.VRMS_THRESHOLD,
-            vrms_multiplier=3.0,
-        )
-        name = config.get_display_name()
-        self.assertIn("Vrms", name)
-        self.assertIn("3.0", name)
 
 
 if __name__ == "__main__":

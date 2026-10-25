@@ -5,8 +5,8 @@ A desktop app (Windows / macOS) for viewing and analyzing multi-channel neural r
 ## Features
 
 - Single-channel or overlay (up to 8 channels) time-series plots, smooth on recordings of 2+ hours
-- Filter chains: low-pass, high-pass, band-pass, notch, CAR, CMR and Vrms threshold, applied in any order
-- Live per-channel Vrms readout
+- Filter chains: low-pass, high-pass, band-pass, notch, CAR and CMR, applied in any order
+- Live per-channel Vrms of the visible data (blanked samples excluded), shown in the plot corner
 - Analog input viewer (below the main plot) with stimulation event detection: assign analog lines to modalities (ICMS, PNS, Tactor or your own), detect events, browse them in a table and correct onset/offset times
 - Stimulation artifact blanking per modality, with fixed or adaptive (per-channel recovery) padding, applied before filtering
 - FFT and Welch PSD on a selected time interval
@@ -49,11 +49,10 @@ pyinstaller --clean tdt_viewer.spec
 ## Usage
 
 1. **Open** a recording folder. Streams are listed on the left; click one to display it.
-2. **Channels tab**: choose single or overlay mode, set the view range, toggle scatter (dot) mode and read Vrms values.
+2. **Channels tab**: choose single or overlay mode, set the view range and toggle scatter (dot) mode. Each displayed channel's Vrms (of the visible data, blanked samples excluded) is shown in the top-right corner of the plot.
 3. **Navigate**: scroll to zoom, drag to pan, double-click to reset.
 4. **Filters tab**: add filters, reorder them (they run top to bottom) and bypass them individually or all at once.
    - For **CAR/CMR**, create subgroups and click channels to assign them. Every channel must be assigned before you can confirm.
-   - The **Vrms threshold** filter zeros samples where `|x| < multiplier × Vrms`, using the Vrms measured before thresholding.
 5. **Analog Ch. panel** (bottom right) and analog plot (below the main plot):
    - **Channel selection** picks the analog input to show. **Edit List…** changes which channels count as analog; those are left out of the electrode lists and CAR/CMR.
    - **Assign Channel** maps the input to a modality and sets its polarity (active high/low), threshold (Auto = midpoint of idle and active levels), merge gap (pulses closer than this form one event) and minimum duration.

@@ -37,7 +37,8 @@ from core.workers import (
 )
 from models import StreamState, ChannelMode
 from dsp import apply_filter_chain, decimate_for_display
-from dsp.blanking import apply_blanking, basic_result, blank_spans
+from dsp.blanking import apply_blanking, basic_result, blank_spans, blank_mask
+from dsp.metrics import compute_vrms
 from models.blanking import ADVANCED
 from models.filter_config import FilterType
 
@@ -84,6 +85,7 @@ class MainWindow(QMainWindow):
         self._raw_time: Optional[np.ndarray] = None
         self._raw_data_all: Optional[np.ndarray] = None  # All channels for CAR/CMR
         self._filtered_data: Optional[np.ndarray] = None
+        self._blank_mask: Optional[np.ndarray] = None  # blanked samples of _filtered_data (None = none)
 
         # Buffer tracking — describes what time range / channels are in _filtered_data
         self._buffer_channels: list = []
@@ -709,6 +711,14 @@ class MainWindow(QMainWindow):
         data_view = data[:, i0:i1] if data.ndim > 1 else data[i0:i1]
         time_view = time[i0:i1]
 
+        # Vrms of exactly what is visible, blanked samples excluded
+        channels = state.get_active_channels()
+        mask_view = self._blank_mask[:, i0:i1] if self._blank_mask is not None else None
+        vrms = compute_vrms(data_view, channels, mask_view)
+        state.vrms_values = vrms
+        self._time_plot.set_vrms([(state.channel_label(c), vrms.get(c)) for c in channels])
+        self._probe_map.update_vrms(vrms)
+
         n = data_view.shape[1] if data_view.ndim > 1 else len(data_view)
         if n > self.MAX_PLOT_POINTS:
             plot_data, plot_time = decimate_for_display(
@@ -718,7 +728,6 @@ class MainWindow(QMainWindow):
             plot_data = data_view
             plot_time = time_view
 
-        channels = state.get_active_channels()
         self._time_plot.set_blank_spans(
             blank_spans(self._app_state.active_blanking(state.stream_name), channels, start, end)
         )
@@ -763,10 +772,9 @@ class MainWindow(QMainWindow):
         # Cache the full-resolution filtered buffer
         self._filtered_data = data
 
-        # Update Vrms display
-        state.vrms_values = vrms_dict
-        self._control_panel.update_vrms(vrms_dict)
-        self._probe_map.update_vrms(vrms_dict)
+        # Blanked samples, so Vrms can leave them out
+        results = self._app_state.active_blanking(state.stream_name)
+        self._blank_mask = blank_mask(self._raw_time, channels, results) if results else None
 
         # Render only the visible view window (slice + decimate from buffer)
         view_start, view_end = state.get_view_range()
@@ -1209,6 +1217,10 @@ class MainWindow(QMainWindow):
                     self._filter_panel.set_probe(self._app_state.probe)
 
                 self._status_label.setText(f"Session loaded from {filepath}")
+                if self._app_state.load_messages:
+                    QMessageBox.information(
+                        self, "Session Loaded", "\n\n".join(self._app_state.load_messages)
+                    )
 
             except Exception as e:
                 QMessageBox.warning(

@@ -161,14 +161,6 @@ class ControlPanel(QWidget):
 
         layout.addWidget(view_group)
 
-        # Vrms display
-        self._vrms_group = QGroupBox("Vrms")
-        vrms_layout = QVBoxLayout(self._vrms_group)
-        self._vrms_label = QLabel("--")
-        self._vrms_label.setStyleSheet("font-family: monospace; font-size: 11px;")
-        vrms_layout.addWidget(self._vrms_label)
-        layout.addWidget(self._vrms_group)
-
         # Display options
         display_group = QGroupBox("Display")
         display_layout = QVBoxLayout(display_group)
@@ -235,9 +227,6 @@ class ControlPanel(QWidget):
         self._scatter_check.blockSignals(True)
         self._scatter_check.setChecked(state.scatter_mode)
         self._scatter_check.blockSignals(False)
-
-        # Restore Vrms display
-        self.update_vrms(state.vrms_values if state.vrms_values else None)
 
     def _update_overlay_list(self):
         """Update the overlay channel list widget."""
@@ -339,26 +328,6 @@ class ControlPanel(QWidget):
             self._state.scatter_mode = enabled
         self.scatter_mode_changed.emit(enabled)
 
-    def update_vrms(self, vrms_values: Optional[Dict[int, float]]):
-        """Update the Vrms display."""
-        if not vrms_values:
-            self._vrms_label.setText("--")
-            return
-
-        lines = []
-        for ch_idx, vrms in sorted(vrms_values.items()):
-            name = self._state.channel_label(ch_idx) if self._state else f"Ch {ch_idx+1}"
-            if vrms < 1e-6:
-                lines.append(f"{name}: {vrms * 1e9:.1f} nV")
-            elif vrms < 1e-3:
-                lines.append(f"{name}: {vrms * 1e6:.1f} uV")
-            elif vrms < 1:
-                lines.append(f"{name}: {vrms * 1e3:.2f} mV")
-            else:
-                lines.append(f"{name}: {vrms:.4f} V")
-
-        self._vrms_label.setText("\n".join(lines))
-
     def clear(self):
         """Clear the panel."""
         self._state = None
@@ -369,5 +338,4 @@ class ControlPanel(QWidget):
         self._overlay_list.clear()
         self._start_spin.setValue(0)
         self._end_spin.setValue(10)
-        self._vrms_label.setText("--")
         self._scatter_check.setChecked(False)

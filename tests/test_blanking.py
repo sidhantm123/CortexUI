@@ -8,7 +8,7 @@ import numpy as np
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from dsp.blanking import (
-    apply_blanking, adaptive_end_windows, basic_result, blank_spans, clean_windows, window_rms,
+    apply_blanking, adaptive_end_windows, basic_result, blank_mask, blank_spans, clean_windows, window_rms,
 )
 from models import StreamState, StimEvent
 from models.analog import number_events
@@ -58,6 +58,13 @@ class TestInterpolation(unittest.TestCase):
         np.testing.assert_array_equal(out[0], self.x[0])
         self.assertLess(np.abs(out[1, 400:500]).max(), 2)
 
+    def test_blank_mask_matches_interpolated_samples(self):
+        res = result([0], [[0.4]], [[0.499]])
+        mask = blank_mask(self.t, [0, 1], [res])
+        self.assertEqual(mask.shape, self.x.shape)
+        self.assertEqual(list(np.flatnonzero(mask[0])), list(range(400, 500)))
+        self.assertFalse(mask[1].any())
+
     def test_blank_spans_merge(self):
         res = result([0, 1], [[0.1, 0.15], [0.3, 0.3]], [[0.2, 0.25], [0.4, 0.45]])
         self.assertEqual(blank_spans([res], [0, 1], 0, 1), [(0.1, 0.25), (0.3, 0.45)])
@@ -105,6 +112,36 @@ class TestIntervals(unittest.TestCase):
     def test_window_rms(self):
         x = np.vstack([np.r_[np.ones(10), 2 * np.ones(10)]])
         np.testing.assert_allclose(window_rms(x, 10), [[1.0, 2.0]])
+
+
+class TestOldSessionFilters(unittest.TestCase):
+
+    def test_vrms_threshold_filter_dropped_on_load(self):
+        import tempfile, shutil
+        from tests.test_blackrock import write_nsx_23
+        tmp = tempfile.mkdtemp()
+        try:
+            data = np.random.default_rng(0).integers(-100, 100, size=(3000, 2)).astype(np.int16)
+            write_nsx_23(os.path.join(tmp, "rec.ns5"), [(0, data)])
+            app = AppState()
+            app.load_block(tmp)
+            session = os.path.join(tmp, "s.json")
+            app.save_session(session)
+            with open(session) as f:
+                d = json.load(f)
+            d["stream_states"]["ns5"]["filters"] = [
+                {"filter_type": "vrms_threshold", "vrms_multiplier": 3.0},
+                {"filter_type": "highpass", "cutoff_low": 300.0, "vrms_multiplier": 3.0},
+            ]
+            with open(session, "w") as f:
+                json.dump(d, f)
+            restored = AppState()
+            restored.load_session(session)
+            filters = restored.stream_states["ns5"].filters
+            self.assertEqual([f.filter_type.value for f in filters], ["highpass"])
+            self.assertEqual(len(restored.load_messages), 1)
+        finally:
+            shutil.rmtree(tmp)
 
 
 class TestBlankingState(unittest.TestCase):

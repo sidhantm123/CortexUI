@@ -299,7 +299,6 @@ class FilterEditDialog(QDialog):
         self._type_combo.addItem("Notch", FilterType.NOTCH)
         self._type_combo.addItem("Common Avg Ref (CAR)", FilterType.CAR)
         self._type_combo.addItem("Common Median Ref (CMR)", FilterType.CMR)
-        self._type_combo.addItem("Vrms Threshold", FilterType.VRMS_THRESHOLD)
         self._type_combo.currentIndexChanged.connect(self._on_type_changed)
         form.addRow("Type:", self._type_combo)
 
@@ -342,14 +341,6 @@ class FilterEditDialog(QDialog):
         self._notch_q_label = QLabel("Q Factor:")
         form.addRow(self._notch_q_label, self._notch_q_spin)
 
-        # Vrms multiplier
-        self._vrms_mult_spin = QDoubleSpinBox()
-        self._vrms_mult_spin.setRange(0.1, 100.0)
-        self._vrms_mult_spin.setValue(3.0)
-        self._vrms_mult_spin.setSingleStep(0.5)
-        self._vrms_mult_label = QLabel("Threshold (x Vrms):")
-        form.addRow(self._vrms_mult_label, self._vrms_mult_spin)
-
         layout.addLayout(form)
 
         # Channel group widget (for CAR/CMR)
@@ -391,7 +382,6 @@ class FilterEditDialog(QDialog):
             self._cutoff_high_label, self._cutoff_high_spin,
             self._notch_freq_label, self._notch_freq_spin,
             self._notch_q_label, self._notch_q_spin,
-            self._vrms_mult_label, self._vrms_mult_spin,
         ]:
             widget.setVisible(False)
 
@@ -444,12 +434,6 @@ class FilterEditDialog(QDialog):
             # OK only enabled when all channels assigned
             self._enable_ok(self._group_widget.all_assigned())
 
-        elif filter_type == FilterType.VRMS_THRESHOLD:
-            self._vrms_mult_label.setVisible(True)
-            self._vrms_mult_spin.setVisible(True)
-            self.setMinimumWidth(300)
-            self._enable_ok(True)
-
         self.adjustSize()
 
     def _on_auto_group_by_shank(self):
@@ -498,7 +482,6 @@ class FilterEditDialog(QDialog):
         if config.notch_freq is not None:
             self._notch_freq_spin.setValue(config.notch_freq)
         self._notch_q_spin.setValue(config.notch_q)
-        self._vrms_mult_spin.setValue(config.vrms_multiplier)
 
         if config.channel_groups and config.filter_type in (
             FilterType.CAR,
@@ -514,7 +497,6 @@ class FilterEditDialog(QDialog):
         cutoff_high = None
         notch_freq = None
         channel_groups = None
-        vrms_multiplier = 3.0
 
         if filter_type == FilterType.LOWPASS:
             cutoff_high = self._cutoff_high_spin.value()
@@ -527,8 +509,6 @@ class FilterEditDialog(QDialog):
             notch_freq = self._notch_freq_spin.value()
         elif filter_type in (FilterType.CAR, FilterType.CMR):
             channel_groups = self._group_widget.get_channel_groups()
-        elif filter_type == FilterType.VRMS_THRESHOLD:
-            vrms_multiplier = self._vrms_mult_spin.value()
 
         # Preserve UID if editing
         uid = self._config.uid if self._config else None
@@ -541,7 +521,6 @@ class FilterEditDialog(QDialog):
             notch_freq=notch_freq,
             notch_q=self._notch_q_spin.value(),
             channel_groups=channel_groups,
-            vrms_multiplier=vrms_multiplier,
         )
 
         if uid:

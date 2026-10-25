@@ -2,7 +2,7 @@
 from dataclasses import dataclass, field
 from enum import Enum
 from typing import Dict, List, Optional, Tuple
-from .filter_config import FilterConfig
+from .filter_config import FilterConfig, REMOVED_FILTER_TYPES
 
 
 class ChannelMode(Enum):
@@ -171,7 +171,10 @@ class StreamState:
         state.overlay_channels = data.get("overlay_channels", [0])
         state.view_start = data.get("view_start", 0.0)
         state.view_end = data.get("view_end", 10.0)
-        state.filters = [FilterConfig.from_dict(f) for f in data.get("filters", [])]
+        state.filters = [
+            FilterConfig.from_dict(f) for f in data.get("filters", [])
+            if f.get("filter_type") not in REMOVED_FILTER_TYPES
+        ]
         state.global_bypass = data.get("global_bypass", False)
         state.scatter_mode = data.get("scatter_mode", False)
         state.fft_start = data.get("fft_start")

@@ -11,15 +11,18 @@ delete details that the code or git history already records.
 | | |
 |---|---|
 | Active branch | `NSP_Basic` (not pushed; branched from `main` @ `beb2da4`) |
-| Last commit | `e60ac42` Add Blanking tab for stimulation artifacts |
+| Last commit | Step 3: Vrms on visible clean data, Vrms threshold filter removed — see `git log` |
 | Tests | 78 passing: `tdtgui/bin/python -m unittest discover tests` |
-| Next step | **Step 3: Filters cleanup** (§4), after the user tests blanking |
+| Next step | **Step 4: Spike Detection tab** (§4), after the user tests step 3 |
 
 ### Done
 1. Analog input viewer and event detection (`78664d0`).
 2. Editable event onset/offset, by table cell or by dragging the line on the analog plot (`7b559ef`).
 3. Blanking tab (`e60ac42`): Basic (fixed pads) and Advanced (adaptive per-channel post-pad), Apply/Remove, applied before filters
    everywhere, saved in the session.
+4. Vrms is computed on the visible data with blanked samples excluded, and shown in the Time Series plot's top-right
+   corner (moved out of the Channels panel). The zeroing Vrms-threshold filter is removed; old sessions drop it with a
+   message (`REMOVED_FILTER_TYPES`).
 
 ### Branches
 - **`main`:** the TDT/Blackrock viewer with filters, FFT/PSD, probe map, export and `.ccf` info.
@@ -99,6 +102,11 @@ tests/                unittest; test_blackrock.py has write_nsx_23() to build sy
   - **RP01 check (ICMS, 1.5×):** median post-pad 1.65 s (notes: ~1.7 s), 2.1% at the 100 ms floor, none capped. The
     slowest channels are rows 125, 123, 121, 113, 111 (stim electrode first), matching the notes. A 300 Hz high-pass
     instead gave 1.35 s, which is why the 250–5000 Hz band is used.
+- **Vrms:**
+  - `MainWindow._rerender_from_buffer` computes `compute_vrms(view, exclude=blank mask)` on every pan or zoom.
+  - The mask (`dsp.blanking.blank_mask`) is built per buffer in `_apply_filters`.
+  - On RP01 elec1-45 over 124–129 s with a 250–5000 Hz band-pass: 115 µV raw, 7.5 µV with ICMS blanked, and 6.3 µV if
+    the interpolated samples were counted (the bias the notes warn about).
 - **Plotting:**
   - Only a buffer of about 3× the view is read from disk, and it is min/max-decimated to ≤ 8000 points.
   - The analog plot keeps its own buffer and `WorkerManager`. It is x-linked to the main plot when Sync is on.
@@ -119,12 +127,25 @@ tests/                unittest; test_blackrock.py has write_nsx_23() to build sy
 
 ## 4. Roadmap
 
-### Step 3: Filters cleanup (NEXT)
-- Remove `VRMS_THRESHOLD` from the filter chain (`models/filter_config.py`, `dsp/filters.py`, `ui/filter_panel.py`) and
-  migrate old sessions that use it.
-
-### Step 4: Spike Detection tab
-- Threshold = −k·σ with **σ = median(|x|)/0.6745** (the user's choice). k defaults to 4.75 and can be edited.
+### Step 4: Spike Detection tab (NEXT, agreed with the user)
+- **Threshold:**
+  - −k·σ with σ = median(|x|)/0.6745 on the filtered, blanked data **in the current view**, blanked samples excluded.
+  - k defaults to 4.75 and can be edited. Polarity is negative, positive or both; the refractory period is 2 ms.
+  - Warn when the chain has no high-pass or band-pass.
+- **Draggable horizontal threshold line** on the Time Series plot, in **Single Channel mode only**:
+  - Dragging sets k = |y|/σ for that channel.
+  - k is shared, and each channel's threshold is k × its own σ.
+- **Markers:** dots at crossings within the loaded buffer, updated live.
+- **Detect Spikes** runs over the whole recording:
+  - σ per channel is frozen from the current view at click time.
+  - A worker reads 10 s chunks of all neural channels, then applies blanking, the filter chain (with CAR) and crossing
+    detection, and stores only spike times.
+  - Show a hint if the view is under ~5 s.
+- **Raster tab** (Time Series | Raster | Spectrum):
+  - One row per channel with a `|` tick per spike.
+  - x-linked with the analog plot, with events shaded. Clicking a row selects that channel.
+- **Session and stale results:** spikes are saved in the session and go stale when blanking, filters or events change.
+- **Later step:** waveform snippets (overlaid ~2 ms cut-outs).
 
 ### Later / unscheduled
 - A "Plots" tab: the user intends to add it later. Don't build it yet.

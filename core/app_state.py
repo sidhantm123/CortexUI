@@ -7,6 +7,7 @@ from dataclasses import dataclass, field
 from models import StreamState
 from models.analog import AnalogAssignment, StimEvent, MODALITY_PRESETS, number_events
 from models.blanking import BlankingSettings, BlankResult
+from models.filter_config import REMOVED_FILTER_TYPES
 from models.probe import ProbeGeometry
 from models.recording import RecordingBlock
 from tdt_io import TDTReader
@@ -43,6 +44,9 @@ class AppState:
     custom_modalities: List[str] = field(default_factory=list)
     # Detected stimulation events (numbered per modality)
     events: List[StimEvent] = field(default_factory=list)
+
+    # Messages from the last load_session (shown to the user)
+    load_messages: List[str] = field(default_factory=list)
 
     # Artifact blanking per modality: settings, and the intervals from "Apply Blanking"
     blanking_settings: Dict[str, BlankingSettings] = field(default_factory=dict)
@@ -277,8 +281,22 @@ class AppState:
 
         self.load_block(block_path)
 
+        # Notes about the session for the user (e.g. settings that no longer exist)
+        self.load_messages = []
+
         # Restore stream states
         saved_states = session.get("stream_states", {})
+        n_removed = sum(
+            1
+            for state_dict in saved_states.values()
+            for f in state_dict.get("filters", [])
+            if f.get("filter_type") in REMOVED_FILTER_TYPES
+        )
+        if n_removed:
+            self.load_messages.append(
+                f"Removed {n_removed} Vrms threshold filter{'s' if n_removed != 1 else ''}: that filter "
+                "no longer exists. Use the Spike Detection tab for thresholding."
+            )
         for name, state_dict in saved_states.items():
             if name in self.stream_states:
                 # Merge saved state into loaded state
