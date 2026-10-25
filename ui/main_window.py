@@ -1035,7 +1035,8 @@ class MainWindow(QMainWindow):
                        f"windows < {s.multiplier:g}x baseline (post {s.min_post_ms:g}-{s.max_post_ms:g} ms)")
             else:
                 how = f"pre {s.pre_ms:g} ms, post {s.post_ms:g} ms"
-            lines.append(f"  {r.modality}: {how}, {r.interpolation} interpolation, {r.summary()}")
+            stale = "  (out of date when exported)" if r.stale else ""
+            lines.append(f"  {r.modality}: {how}, {r.interpolation} interpolation, {r.summary()}{stale}")
         return lines
 
     def _update_blanking_indicator(self):
@@ -1348,6 +1349,7 @@ class MainWindow(QMainWindow):
             state,
             blanking=", ".join(r.modality for r in blank_results),
             filters=", ".join(f.get_display_name() for f in active_filters),
+            stale_blanking=[r.modality for r in blank_results if r.stale],
             parent=self,
         )
         if dialog.exec() != QDialog.DialogCode.Accepted:

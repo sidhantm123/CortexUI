@@ -9,27 +9,32 @@ from PySide6.QtWidgets import (
     QLabel,
     QDoubleSpinBox,
     QComboBox,
-    QListWidget,
-    QListWidgetItem,
     QDialogButtonBox,
     QButtonGroup,
     QCheckBox,
+    QLineEdit,
+    QPushButton,
 )
 
 from models import StreamState
+from .channel_spec import format_channel_spec, parse_channel_spec
 
 
 class ExportBinaryDialog(QDialog):
     """Dialog for configuring int16 binary export (.i16 / .bin)."""
 
-    def __init__(self, state: StreamState, blanking: str = "", filters: str = "", parent=None):
+    def __init__(self, state: StreamState, blanking: str = "", filters: str = "",
+                 stale_blanking=(), parent=None):
         """
         Args:
             blanking: description of the applied blanking ("" = none applied).
             filters: description of the active filter chain ("" = none / all bypassed).
+            stale_blanking: modalities whose applied blanking is out of date.
         """
         super().__init__(parent)
         self._state = state
+        self._stale = list(stale_blanking)
+        self._ok_button = None
         self._blanking_desc = blanking
         self._filters_desc = filters
         self.setWindowTitle("Export Binary File")
@@ -76,50 +81,49 @@ class ExportBinaryDialog(QDialog):
         self._filter_check.setChecked(bool(self._filters_desc))
         self._filter_check.setEnabled(bool(self._filters_desc))
         proc_layout.addWidget(self._filter_check)
+        self._stale_note = QLabel(
+            f'<span style="color:#c0392b;">{", ".join(self._stale)} blanking is out of date (events or '
+            "settings changed since Apply). Export will use the last applied blanking — cancel and click "
+            "Apply Blanking to update.</span>"
+        )
+        self._stale_note.setWordWrap(True)
+        proc_layout.addWidget(self._stale_note)
+        self._blank_check.toggled.connect(self._update_stale_note)
+        self._update_stale_note()
         hint = QLabel("<small>Blanking runs first, then the filters. Untick both for raw data.</small>")
         hint.setWordWrap(True)
         proc_layout.addWidget(hint)
         layout.addWidget(proc_group)
 
-        # ── Channel selection ─────────────────────────────────────────────────
-        ch_group = QGroupBox("Channels")
+        # ── Channel selection (typed, in the app's numbering) ───────────────
+        st = self._state
+        self._number_word = "electrodes" if st.uses_electrode_numbers else "channels"
+        ch_group = QGroupBox("Electrodes" if st.uses_electrode_numbers else "Channels")
         ch_layout = QVBoxLayout(ch_group)
-        self._ch_btn_grp = QButtonGroup(self)
-
-        displayed = self._state.get_active_channels()
-        displayed_str = ", ".join(str(c + 1) for c in displayed)
-        self._ch_displayed = QRadioButton(
-            f"Currently displayed  (Ch {displayed_str})"
+        ch_layout.addWidget(QLabel(
+            f"<small>Type {self._number_word} as numbers and ranges, e.g. <b>1-24, 37-45</b> or <b>33</b>.</small>"
+        ))
+        row = QHBoxLayout()
+        self._ch_edit = QLineEdit()
+        self._ch_edit.setPlaceholderText("e.g. 1-24, 37-45")
+        self._ch_edit.textChanged.connect(self._on_channels_typed)
+        row.addWidget(self._ch_edit, 1)
+        all_btn = QPushButton("All Channels")
+        all_btn.clicked.connect(
+            lambda: self._ch_edit.setText(format_channel_spec(st.display_number(c) for c in st.neural_channels()))
         )
-        self._ch_all = QRadioButton(
-            f"All channels  ({len(self._state.neural_channels())} total)"
+        row.addWidget(all_btn)
+        shown_btn = QPushButton("Displayed")
+        shown_btn.clicked.connect(
+            lambda: self._ch_edit.setText(format_channel_spec(st.display_number(c) for c in st.get_active_channels()))
         )
-        self._ch_select = QRadioButton("Select channels:")
-
-        self._ch_displayed.setChecked(True)
-        self._ch_btn_grp.addButton(self._ch_displayed)
-        self._ch_btn_grp.addButton(self._ch_all)
-        self._ch_btn_grp.addButton(self._ch_select)
-
-        ch_layout.addWidget(self._ch_displayed)
-        ch_layout.addWidget(self._ch_all)
-        ch_layout.addWidget(self._ch_select)
-
-        # Scrollable channel checklist (enabled only for "Select channels")
-        self._ch_list = QListWidget()
-        self._ch_list.setMaximumHeight(100)
-        self._ch_list.setEnabled(False)
-        for i in self._state.ordered_neural_channels():
-            item = QListWidgetItem(self._state.channel_label(i, "Channel"))
-            item.setData(Qt.ItemDataRole.UserRole, i)
-            item.setCheckState(
-                Qt.CheckState.Checked if i in displayed else Qt.CheckState.Unchecked
-            )
-            self._ch_list.addItem(item)
-
-        self._ch_select.toggled.connect(self._ch_list.setEnabled)
-        ch_layout.addWidget(self._ch_list)
+        row.addWidget(shown_btn)
+        ch_layout.addLayout(row)
+        self._ch_preview = QLabel("")
+        self._ch_preview.setWordWrap(True)
+        ch_layout.addWidget(self._ch_preview)
         layout.addWidget(ch_group)
+        self._channels: list = []
 
         # ── Scale factor ──────────────────────────────────────────────────────
         scale_group = QGroupBox("Scale Factor")
@@ -172,24 +176,42 @@ class ExportBinaryDialog(QDialog):
         buttons.accepted.connect(self.accept)
         buttons.rejected.connect(self.reject)
         layout.addWidget(buttons)
+        self._ok_button = buttons.button(QDialogButtonBox.StandardButton.Ok)
+
+        # Start with the displayed channels
+        self._ch_edit.setText(
+            format_channel_spec(self._state.display_number(c) for c in self._state.get_active_channels())
+        )
+
+    def _on_channels_typed(self, text: str):
+        """Parse the typed selection, show a preview or the problem, and enable OK when valid."""
+        st = self._state
+        number_to_ch = {st.display_number(c): c for c in st.neural_channels()}
+        reasons = {}
+        if not st.uses_electrode_numbers:
+            reasons = {c + 1: f"an analog channel ({st.channel_labels[c] if st.channel_labels else ''})".replace(" ()", "")
+                       for c in st.analog_channels}
+        noun = "electrode" if st.uses_electrode_numbers else "channel"
+        numbers, error = parse_channel_spec(text, number_to_ch, reasons, noun)
+        self._channels = [number_to_ch[n] for n in numbers]
+        if error:
+            self._ch_preview.setText(f'<span style="color:#c0392b;">{error}</span>')
+        else:
+            names = [st.channel_label(c) for c in self._channels]
+            shown = ", ".join(names[:6]) + (", …" if len(names) > 6 else "")
+            word = self._number_word if len(names) != 1 else self._number_word[:-1]
+            self._ch_preview.setText(f"<small>{len(names)} {word}: {shown}</small>")
+        if self._ok_button is not None:
+            self._ok_button.setEnabled(not error)
+
+    def _update_stale_note(self):
+        show = bool(self._stale) and self._blank_check.isChecked()
+        self._stale_note.setVisible(show)
 
     def get_options(self) -> dict:
         """Return selected export options."""
-        if self._ch_displayed.isChecked():
-            channels = self._state.get_active_channels()
-        elif self._ch_all.isChecked():
-            channels = self._state.ordered_neural_channels()
-        else:
-            channels = [
-                self._ch_list.item(i).data(Qt.ItemDataRole.UserRole)
-                for i in range(self._ch_list.count())
-                if self._ch_list.item(i).checkState() == Qt.CheckState.Checked
-            ]
-            if not channels:
-                channels = self._state.get_active_channels()
-
-        # Written in ascending order of the displayed numbers (electrode or channel)
-        channels = sorted(set(channels), key=self._state.display_number)
+        # Ascending order of the displayed numbers (electrode or channel)
+        channels = sorted(self._channels, key=self._state.display_number)
 
         return {
             "range": "current_view" if self._range_view.isChecked() else "full",
