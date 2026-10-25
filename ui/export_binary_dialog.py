@@ -13,6 +13,7 @@ from PySide6.QtWidgets import (
     QListWidgetItem,
     QDialogButtonBox,
     QButtonGroup,
+    QCheckBox,
 )
 
 from models import StreamState
@@ -21,9 +22,16 @@ from models import StreamState
 class ExportBinaryDialog(QDialog):
     """Dialog for configuring int16 binary export (.i16 / .bin)."""
 
-    def __init__(self, state: StreamState, parent=None):
+    def __init__(self, state: StreamState, blanking: str = "", filters: str = "", parent=None):
+        """
+        Args:
+            blanking: description of the applied blanking ("" = none applied).
+            filters: description of the active filter chain ("" = none / all bypassed).
+        """
         super().__init__(parent)
         self._state = state
+        self._blanking_desc = blanking
+        self._filters_desc = filters
         self.setWindowTitle("Export Binary File")
         self.setMinimumWidth(400)
         self._setup_ui()
@@ -50,6 +58,28 @@ class ExportBinaryDialog(QDialog):
         range_layout.addWidget(self._range_view)
         range_layout.addWidget(self._range_full)
         layout.addWidget(range_group)
+
+        # ── Processing stage ─────────────────────────────────────────────────
+        proc_group = QGroupBox("Processing")
+        proc_layout = QVBoxLayout(proc_group)
+        self._blank_check = QCheckBox(
+            f"Apply blanking  ({self._blanking_desc})" if self._blanking_desc
+            else "Apply blanking  (none applied)"
+        )
+        self._blank_check.setChecked(bool(self._blanking_desc))
+        self._blank_check.setEnabled(bool(self._blanking_desc))
+        proc_layout.addWidget(self._blank_check)
+        self._filter_check = QCheckBox(
+            f"Apply filter chain  ({self._filters_desc})" if self._filters_desc
+            else "Apply filter chain  (no active filters)"
+        )
+        self._filter_check.setChecked(bool(self._filters_desc))
+        self._filter_check.setEnabled(bool(self._filters_desc))
+        proc_layout.addWidget(self._filter_check)
+        hint = QLabel("<small>Blanking runs first, then the filters. Untick both for raw data.</small>")
+        hint.setWordWrap(True)
+        proc_layout.addWidget(hint)
+        layout.addWidget(proc_group)
 
         # ── Channel selection ─────────────────────────────────────────────────
         ch_group = QGroupBox("Channels")
@@ -164,4 +194,6 @@ class ExportBinaryDialog(QDialog):
             "scale": self._scale_spin.value(),
             "layout": self._layout_combo.currentData(),
             "extension": self._ext_combo.currentData(),
+            "apply_blanking": self._blank_check.isChecked(),
+            "apply_filters": self._filter_check.isChecked(),
         }

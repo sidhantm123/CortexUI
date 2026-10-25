@@ -543,6 +543,37 @@ class BlankingWorker(CancellableWorker):
             self.signals.error.emit(str(e))
 
 
+class ExportWorker(CancellableWorker):
+    """
+    Chunked int16 binary export (see core.export.export_binary).
+
+    Emits result: dict with n_samples, n_clipped, cancelled.
+    """
+
+    def __init__(self, **kwargs):
+        super().__init__()
+        self.kwargs = kwargs
+
+    @Slot()
+    def run(self):
+        from core.export import export_binary
+
+        self.signals.started.emit()
+        try:
+            result = export_binary(
+                progress=self.signals.progress.emit,
+                cancelled=self.is_cancelled,
+                **self.kwargs,
+            )
+            if result["cancelled"]:
+                self.signals.cancelled.emit()
+                return
+            self.signals.result.emit(result)
+            self.signals.finished.emit()
+        except Exception as e:
+            self.signals.error.emit(str(e))
+
+
 class WorkerManager:
     """Manages worker threads and provides cancellation."""
 

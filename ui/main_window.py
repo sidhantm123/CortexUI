@@ -34,6 +34,7 @@ from core.workers import (
     SpectralWorker,
     EventDetectWorker,
     BlankingWorker,
+    ExportWorker,
 )
 from models import StreamState, ChannelMode
 from dsp import apply_filter_chain, decimate_for_display
@@ -116,6 +117,7 @@ class MainWindow(QMainWindow):
         self._analog_workers = WorkerManager()
         self._detect_worker: Optional[EventDetectWorker] = None
         self._blank_worker: Optional[BlankingWorker] = None
+        self._export_worker: Optional[ExportWorker] = None
 
         self._setup_ui()
         self._setup_menu()
@@ -1292,7 +1294,14 @@ class MainWindow(QMainWindow):
 
         from .export_binary_dialog import ExportBinaryDialog
 
-        dialog = ExportBinaryDialog(state, self)
+        blank_results = self._app_state.active_blanking(state.stream_name)
+        active_filters = [] if state.global_bypass else [f for f in state.filters if not f.bypassed]
+        dialog = ExportBinaryDialog(
+            state,
+            blanking=", ".join(r.modality for r in blank_results),
+            filters=", ".join(f.get_display_name() for f in active_filters),
+            parent=self,
+        )
         if dialog.exec() != QDialog.DialogCode.Accepted:
             return
 
@@ -1320,104 +1329,48 @@ class MainWindow(QMainWindow):
         if not filepath.endswith(ext):
             filepath += ext
 
-        progress = QProgressDialog("Preparing export...", "Cancel", 0, 100, self)
+        fs = state.sample_rate
+        if opts["range"] == "current_view":
+            t1, t2 = state.get_view_range()
+        else:
+            t1, t2 = 0.0, state.duration
+        n_stream = int(round(state.duration * fs))
+        i_start = max(0, int(round(t1 * fs)))
+        i_stop = min(n_stream, max(i_start + 1, int(round(t2 * fs))))
+
+        progress = QProgressDialog("Exporting...", "Cancel", 0, 100, self)
         progress.setWindowModality(Qt.WindowModality.WindowModal)
-        progress.show()
-        QApplication.processEvents()
+        progress.setMinimumDuration(0)
 
-        try:
-            displayed_channels = state.get_active_channels()
-            use_fast_path = (
-                opts["range"] == "current_view"
-                and channels == displayed_channels
-                and self._filtered_data is not None
-            )
+        worker = ExportWorker(
+            reader=self._app_state.reader,
+            stream=state.stream_name,
+            channels=list(channels),
+            i_start=i_start,
+            i_stop=i_stop,
+            fs=fs,
+            num_channels=state.num_channels,
+            filepath=filepath,
+            scale=opts["scale"],
+            layout=opts["layout"],
+            blank_results=blank_results if opts["apply_blanking"] else [],
+            filters=copy.deepcopy(active_filters) if opts["apply_filters"] else None,
+        )
+        worker.signals.progress.connect(progress.setValue)
+        progress.canceled.connect(worker.cancel)
 
-            if use_fast_path:
-                # Reuse already-filtered data that is in memory (no re-load needed)
-                data = self._filtered_data
-                progress.setValue(60)
-            else:
-                if opts["range"] == "current_view":
-                    t1, t2 = state.get_view_range()
-                else:
-                    t1, t2 = 0.0, state.duration
-
-                progress.setLabelText("Loading data from disk...")
-                QApplication.processEvents()
-
-                # Check if any active filter needs all channels (CAR/CMR)
-                needs_all = any(
-                    f.filter_type in (FilterType.CAR, FilterType.CMR) and not f.bypassed
-                    for f in state.filters
-                ) and not state.global_bypass
-
-                raw, raw_time = self._app_state.reader.get_stream_data(
-                    state.stream_name,
-                    channels=channels,
-                    start_time=t1,
-                    end_time=t2,
-                )
-                progress.setValue(40)
-
-                all_channel_data = None
-                if needs_all:
-                    progress.setLabelText("Loading all channels for re-referencing...")
-                    QApplication.processEvents()
-                    all_channel_data, _ = self._app_state.reader.get_stream_data(
-                        state.stream_name,
-                        channels=list(range(state.num_channels)),
-                        start_time=t1,
-                        end_time=t2,
-                    )
-
-                progress.setLabelText("Blanking and applying filter chain...")
-                QApplication.processEvents()
-                raw = self._blank(raw, raw_time, channels, state.stream_name)
-                if all_channel_data is not None:
-                    all_channel_data = self._blank(
-                        all_channel_data, raw_time, list(range(state.num_channels)), state.stream_name
-                    )
-                data, _, _ = apply_filter_chain(
-                    raw,
-                    state.filters,
-                    state.sample_rate,
-                    state.global_bypass,
-                    all_channel_data=all_channel_data,
-                    channel_indices=channels,
-                )
-                progress.setValue(70)
-
-            # Ensure 2D: (n_channels, n_samples)
-            if data.ndim == 1:
-                data = data.reshape(1, -1)
-
-            progress.setLabelText("Converting to int16 and writing...")
-            QApplication.processEvents()
-
-            scaled = data * opts["scale"]
-            clipped = np.clip(scaled, -32768, 32767)
-            int16_data = clipped.astype(np.int16)
-
-            if opts["layout"] == "interlaced":
-                # Transpose so layout is (n_samples, n_channels) then write row-major
-                # → ch0_s0, ch1_s0, ..., ch0_s1, ch1_s1, ...
-                np.ascontiguousarray(int16_data.T).tofile(filepath)
-            else:
-                # Channel-sequential: all samples for ch0, then ch1, ...
-                int16_data.tofile(filepath)
-
-            progress.setValue(90)
-
-            # Write companion summary text file
+        def done(result):
+            progress.close()
             summary_path = str(Path(filepath).with_suffix(".txt"))
             self._write_export_summary(
-                summary_path, state, channels, opts, data.shape, datetime.now()
+                summary_path, state, channels, opts, (i_start, i_stop), result,
+                blank_results, active_filters, datetime.now(),
             )
-
-            progress.setValue(100)
-
             file_size_mb = os.path.getsize(filepath) / (1024 * 1024)
+            clipped = (
+                f"\n\n{result['n_clipped']:,} samples were clipped at the int16 limits; "
+                "consider a smaller scale factor." if result["n_clipped"] else ""
+            )
             self._status_label.setText(f"Exported: {filepath}")
             QMessageBox.information(
                 self,
@@ -1425,15 +1378,28 @@ class MainWindow(QMainWindow):
                 f"Binary file saved:\n{filepath}\n\n"
                 f"Summary file:\n{summary_path}\n\n"
                 f"File size: {file_size_mb:.1f} MB\n\n"
-                f"Sample rate to use when importing: {state.sample_rate:.4f} Hz",
+                f"Sample rate to use when importing: {fs:.4f} Hz{clipped}",
             )
 
-        except Exception as e:
-            QMessageBox.warning(
-                self, "Export Error", f"Failed to export data:\n\n{e}"
-            )
-        finally:
+        def failed(err):
             progress.close()
+            QMessageBox.warning(self, "Export Error", f"Failed to export data:\n\n{err}")
+
+        def cancelled():
+            progress.close()
+            try:
+                os.remove(filepath)
+            except OSError:
+                pass
+            self._status_label.setText("Export cancelled")
+
+        worker.signals.result.connect(done)
+        worker.signals.error.connect(failed)
+        worker.signals.cancelled.connect(cancelled)
+        # Not submitted to _worker_manager: plot refreshes call cancel_all() on it
+        self._export_worker = worker
+        self._worker_manager.thread_pool.start(worker)
+        progress.show()
 
     def _write_export_summary(
         self,
@@ -1441,35 +1407,31 @@ class MainWindow(QMainWindow):
         state,
         channels: list,
         opts: dict,
-        data_shape: tuple,
+        sample_range: tuple,
+        result: dict,
+        blank_results: list,
+        active_filters: list,
         export_time,
     ):
         """Write a companion .txt summary alongside the binary export."""
-        n_channels, n_samples = data_shape
+        fs = state.sample_rate
+        i_start, i_stop = sample_range
+        label = "current view" if opts["range"] == "current_view" else "full recording"
+        time_range_str = f"{i_start / fs:.4f} – {i_stop / fs:.4f} s  ({label})"
 
-        if opts["range"] == "current_view":
-            s, e = state.view_start, state.view_end
-            time_range_str = f"{s:.4f} – {e:.4f} s  (current view)"
+        if opts["apply_blanking"] and blank_results:
+            blank_lines = ["Blanking      : applied (before filters)"] + self._blanking_summary_lines(state.stream_name)
         else:
-            time_range_str = f"0 – {state.duration:.4f} s  (full recording)"
-
-        # Describe active filters
-        filter_lines = []
-        if state.global_bypass:
-            filter_lines.append("  (all filters bypassed)")
-        elif not state.filters:
-            filter_lines.append("  (none)")
+            blank_lines = ["Blanking      : not applied"]
+        if opts["apply_filters"] and active_filters:
+            filter_lines = ["Filters       : applied, in order"] + [
+                f"  {i}. {f.get_display_name()}" for i, f in enumerate(active_filters, 1)
+            ]
         else:
-            idx = 1
-            for f in state.filters:
-                if f.bypassed:
-                    continue
-                filter_lines.append(f"  {idx}. {f.get_display_name()}")
-                idx += 1
-            if not filter_lines:
-                filter_lines.append("  (all filters bypassed individually)")
+            filter_lines = ["Filters       : not applied"]
 
         ch_1based = [c + 1 for c in channels]
+        labels = [state.channel_label(c) for c in channels]
         layout_desc = (
             "Interlaced  (ch0_s0, ch1_s0, ..., ch0_s1, ch1_s1, ...)"
             if opts["layout"] == "interlaced"
@@ -1483,20 +1445,19 @@ class MainWindow(QMainWindow):
             f"Block         : {self._app_state.block.name}",
             f"Stream        : {state.stream_name}",
             f"Channels      : {ch_1based}  (1-based)",
+            f"Labels        : {labels}",
             f"Time Range    : {time_range_str}",
-            f"Sample Rate   : {state.sample_rate:.6f} Hz",
-            f"Samples/Ch    : {n_samples}",
-            f"Num Channels  : {n_channels}",
-            f"Scale Factor  : {opts['scale']:g}  (data multiplied before int16 conversion)",
+            f"Sample Range  : {i_start} – {i_stop}  (stream samples, end exclusive)",
+            f"Sample Rate   : {fs:.6f} Hz",
+            f"Samples/Ch    : {result['n_samples']}",
+            f"Num Channels  : {len(channels)}",
+            f"Scale Factor  : {opts['scale']:g}  (volts multiplied by this before int16 conversion)",
+            f"Clipped       : {result['n_clipped']} samples at the int16 limits",
             f"Data Type     : int16  (little-endian)",
             f"Sample Layout : {layout_desc}",
             f"File Extension: {opts['extension']}",
             "",
-            "Blanking (applied before filters):",
-        ] + self._blanking_summary_lines(state.stream_name) + [
-            "",
-            "Active Filters:",
-        ] + filter_lines
+        ] + blank_lines + [""] + filter_lines
 
         with open(filepath, "w") as fh:
             fh.write("\n".join(lines) + "\n")
@@ -1524,7 +1485,7 @@ class MainWindow(QMainWindow):
         # Cancel any running workers
         self._worker_manager.cancel_all()
         self._analog_workers.cancel_all()
-        for worker in (self._detect_worker, self._blank_worker):
+        for worker in (self._detect_worker, self._blank_worker, self._export_worker):
             if worker is not None:
                 worker.cancel()
         self._worker_manager.wait_all(3000)

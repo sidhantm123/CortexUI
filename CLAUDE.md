@@ -12,7 +12,7 @@ delete details that the code or git history already records.
 |---|---|
 | Active branch | `NSP_Basic` (not pushed; branched from `main` @ `beb2da4`) |
 | Last commit | `de192d3` Compute Vrms on visible clean data; remove the zeroing Vrms filter |
-| Tests | 78 passing: `tdtgui/bin/python -m unittest discover tests` |
+| Tests | 84 passing: `tdtgui/bin/python -m unittest discover tests` |
 | Next step | **Step 4: Spike Detection tab** (§4), after the user tests step 3 |
 
 ### Done
@@ -23,6 +23,8 @@ delete details that the code or git history already records.
 4. (`de192d3`) Vrms is computed on the visible data with blanked samples excluded, and shown in the Time Series plot's top-right
    corner (moved out of the Channels panel). The zeroing Vrms-threshold filter is removed; old sessions drop it with a
    message (`REMOVED_FILTER_TYPES`).
+5. Export at any stage: Apply blanking / Apply filter chain checkboxes; chunked full-recording export (`core/export.py`,
+   `ExportWorker`); "current view" now exports exactly the view (it used to write the ~3× buffer).
 
 ### Branches
 - **`main`:** the TDT/Blackrock viewer with filters, FFT/PSD, probe map, export and `.ccf` info.
@@ -107,6 +109,15 @@ tests/                unittest; test_blackrock.py has write_nsx_23() to build sy
   - The mask (`dsp.blanking.blank_mask`) is built per buffer in `_apply_filters`.
   - On RP01 elec1-45 over 124–129 s with a 250–5000 Hz band-pass: 115 µV raw, 7.5 µV with ICMS blanked, and 6.3 µV if
     the interpolated samples were counted (the bias the notes warn about).
+- **Export (`core/export.py`):**
+  - `export_binary` works in exact sample indices and passes `(i + 0.5)/fs` to readers, because `int(t*fs)` can drop a
+    sample.
+  - Chunks are 5 s, with 1 s of padding when filters are on (trimmed before writing).
+  - Chunk boundaries avoid blank spans widened by the interpolation-anchor margin (`CUBIC_ANCHORS + 2`). Without that,
+    a blank ending at a boundary loses its right anchor.
+  - With CAR/CMR active, all channels are loaded.
+  - On RP01 a full blanked export of 128 ch takes 141 s, writes 7.4 GB and peaks at ~1.5 GB RSS. macOS `ru_maxrss`
+    is in bytes.
 - **Plotting:**
   - Only a buffer of about 3× the view is read from disk, and it is min/max-decimated to ≤ 8000 points.
   - The analog plot keeps its own buffer and `WorkerManager`. It is x-linked to the main plot when Sync is on.
