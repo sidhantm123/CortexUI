@@ -4,7 +4,7 @@ import os
 from pathlib import Path
 from typing import Optional
 
-from PySide6.QtCore import Qt, Slot, QTimer
+from PySide6.QtCore import Qt, Slot, QTimer, QSettings
 from PySide6.QtWidgets import (
     QMainWindow,
     QWidget,
@@ -22,7 +22,7 @@ from PySide6.QtWidgets import (
     QApplication,
     QDialog,
 )
-from PySide6.QtGui import QAction, QDragEnterEvent, QDropEvent
+from PySide6.QtGui import QAction, QActionGroup, QDragEnterEvent, QDropEvent
 
 import numpy as np
 
@@ -36,7 +36,7 @@ from core.workers import (
     BlankingWorker,
     ExportWorker,
 )
-from models import StreamState, ChannelMode
+from models import StreamState, ChannelMode, NUMBER_BY_ELECTRODE, NUMBER_BY_CHANNEL
 from dsp import apply_filter_chain, decimate_for_display
 from dsp.blanking import apply_blanking, basic_result, blank_spans, blank_mask
 from dsp.metrics import compute_vrms
@@ -76,6 +76,11 @@ class MainWindow(QMainWindow):
 
         self.setWindowTitle("Multi-Channel Neural Viewer")
         self.setMinimumSize(1200, 800)
+
+        # App-wide channel numbering preference (electrode numbers by default)
+        self._settings = QSettings("NSP", "MultiChannelNeuralViewer")
+        saved = self._settings.value("numbering", NUMBER_BY_ELECTRODE)
+        StreamState.numbering = saved if saved in (NUMBER_BY_ELECTRODE, NUMBER_BY_CHANNEL) else NUMBER_BY_ELECTRODE
 
         # State
         self._app_state = AppState()
@@ -284,12 +289,54 @@ class MainWindow(QMainWindow):
         recording_info.triggered.connect(self._on_recording_info)
         view_menu.addAction(recording_info)
 
+        view_menu.addSeparator()
+        numbering_menu = view_menu.addMenu("Number Channels By")
+        numbering_group = QActionGroup(self)
+        numbering_group.setExclusive(True)
+        self._number_by_electrode = QAction("Electrode", self, checkable=True)
+        self._number_by_electrode.setToolTip("Electrode numbers from the channel labels, e.g. elec1-10 → 10")
+        self._number_by_channel = QAction("Channel (recording order)", self, checkable=True)
+        for action, mode in (
+            (self._number_by_electrode, NUMBER_BY_ELECTRODE),
+            (self._number_by_channel, NUMBER_BY_CHANNEL),
+        ):
+            numbering_group.addAction(action)
+            numbering_menu.addAction(action)
+            action.triggered.connect(lambda checked, m=mode: self._set_numbering(m))
+        self._update_numbering_actions()
+
         # Help menu
         help_menu = menubar.addMenu("Help")
 
         about_action = QAction("About", self)
         about_action.triggered.connect(self._on_about)
         help_menu.addAction(about_action)
+
+    def _update_numbering_actions(self):
+        """Check the active numbering; grey out Electrode when this stream's labels don't allow it."""
+        state = self._app_state.get_current_state()
+        available = state is None or state.electrode_numbers is not None
+        self._number_by_electrode.setEnabled(available)
+        self._number_by_electrode.setText(
+            "Electrode" if available else f"Electrode (unavailable: {state.electrode_note})"
+        )
+        by_electrode = StreamState.numbering == NUMBER_BY_ELECTRODE and available
+        self._number_by_electrode.setChecked(by_electrode)
+        self._number_by_channel.setChecked(not by_electrode)
+
+    def _set_numbering(self, mode: str):
+        """Switch app-wide numbering and refresh every channel list, keeping the selection."""
+        StreamState.numbering = mode
+        self._settings.setValue("numbering", mode)
+        self._update_numbering_actions()
+        state = self._app_state.get_current_state()
+        if state is None:
+            return
+        self._control_panel.set_state(state)
+        self._spectrum_panel.set_state(state)
+        self._last_plot_channels = []  # rebuild legends / Vrms labels
+        view_start, view_end = state.get_view_range()
+        self._rerender_from_buffer(view_start, view_end, state)
 
     def _setup_statusbar(self):
         """Set up the status bar."""
@@ -426,6 +473,7 @@ class MainWindow(QMainWindow):
             self._filter_panel.set_state(state)
             self._spectrum_panel.set_state(state)
             self._analog_panel.refresh()
+            self._update_numbering_actions()
 
             # Load and display data
             self._refresh_plot()
@@ -1431,7 +1479,10 @@ class MainWindow(QMainWindow):
             filter_lines = ["Filters       : not applied"]
 
         ch_1based = [c + 1 for c in channels]
-        labels = [state.channel_label(c) for c in channels]
+        labels = [state.channel_labels[c] if state.channel_labels else "" for c in channels]
+        electrodes = (
+            [state.electrode_numbers[c] for c in channels] if state.electrode_numbers else None
+        )
         layout_desc = (
             "Interlaced  (ch0_s0, ch1_s0, ..., ch0_s1, ch1_s1, ...)"
             if opts["layout"] == "interlaced"
@@ -1444,8 +1495,10 @@ class MainWindow(QMainWindow):
             f"Export Date   : {export_time.strftime('%Y-%m-%d %H:%M:%S')}",
             f"Block         : {self._app_state.block.name}",
             f"Stream        : {state.stream_name}",
-            f"Channels      : {ch_1based}  (1-based)",
+            f"Electrodes    : {electrodes if electrodes else 'n/a (labels have no electrode numbers)'}",
+            f"Channels      : {ch_1based}  (1-based recording order)",
             f"Labels        : {labels}",
+            f"File order    : as listed above (row i of the file = item i)",
             f"Time Range    : {time_range_str}",
             f"Sample Range  : {i_start} – {i_stop}  (stream samples, end exclusive)",
             f"Sample Rate   : {fs:.6f} Hz",

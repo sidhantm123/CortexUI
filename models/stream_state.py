@@ -1,13 +1,44 @@
 """Stream state model for per-stream persistence."""
+import re
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Dict, List, Optional, Tuple
+from typing import ClassVar, Dict, List, Optional, Tuple
 from .filter_config import FilterConfig, REMOVED_FILTER_TYPES
 
 
 class ChannelMode(Enum):
     SINGLE = "single"
     OVERLAY = "overlay"
+
+
+# How channels are numbered in the UI
+NUMBER_BY_ELECTRODE = "electrode"  # trailing number of the label, e.g. elec1-10 -> 10
+NUMBER_BY_CHANNEL = "channel"  # recording order, 1-based
+
+_TRAILING_INT = re.compile(r"(\d+)\s*$")
+
+
+def parse_electrode_numbers(labels: Optional[List[str]], channels: List[int]) -> Tuple[Optional[Dict[int, int]], str]:
+    """
+    Electrode number of each channel from the trailing integer of its label.
+
+    Returns (channel index -> electrode number, "") when every channel has one and they are
+    unique, otherwise (None, reason).
+    """
+    if not channels:
+        return None, "no electrode channels"
+    if not labels:
+        return None, "the recording has no channel labels"
+    numbers: Dict[int, int] = {}
+    for ch in channels:
+        label = labels[ch] if ch < len(labels) else ""
+        m = _TRAILING_INT.search(label or "")
+        if not m:
+            return None, f"label '{label}' has no electrode number"
+        numbers[ch] = int(m.group(1))
+    if len(set(numbers.values())) != len(numbers):
+        return None, "electrode numbers in the labels are not unique"
+    return numbers, ""
 
 
 @dataclass
@@ -52,11 +83,47 @@ class StreamState:
     psd_nperseg: int = 1024
     psd_overlap: float = 0.5
 
+    # App-wide numbering preference (set by the main window from user settings)
+    numbering: ClassVar[str] = NUMBER_BY_ELECTRODE
+
     def __post_init__(self):
         """Initialize view_end based on duration if needed."""
         if self.view_end > self.duration:
             self.view_end = min(10.0, self.duration)
+        self._update_electrode_numbers()
+        if self.selected_channel == 0 and self.neural_channels():
+            self.selected_channel = self.ordered_neural_channels()[0]
+            self.overlay_channels = [self.selected_channel]
         self._drop_analog_from_selection()
+
+    # ------------------------------------------------------------------ numbering
+
+    def _update_electrode_numbers(self):
+        self.electrode_numbers, self.electrode_note = parse_electrode_numbers(
+            self.channel_labels, self.neural_channels()
+        )
+
+    @property
+    def uses_electrode_numbers(self) -> bool:
+        """True when channels are shown by electrode number (preferred and available)."""
+        return StreamState.numbering == NUMBER_BY_ELECTRODE and self.electrode_numbers is not None
+
+    def display_number(self, channel: int) -> int:
+        """Number shown for a channel: electrode number, or 1-based channel number."""
+        if self.uses_electrode_numbers and channel in self.electrode_numbers:
+            return self.electrode_numbers[channel]
+        return channel + 1
+
+    def channel_for_number(self, number: int) -> Optional[int]:
+        """Neural channel index shown as this number, or None."""
+        for ch in self.neural_channels():
+            if self.display_number(ch) == number:
+                return ch
+        return None
+
+    def ordered_neural_channels(self) -> List[int]:
+        """Neural channel indices sorted by their displayed number."""
+        return sorted(self.neural_channels(), key=self.display_number)
 
     def neural_channels(self) -> List[int]:
         """Channel indices that are electrodes, i.e. everything except analog inputs."""
@@ -66,11 +133,12 @@ class StreamState:
     def set_analog_channels(self, channels: List[int]):
         """Replace the analog channel list and keep the neural selection valid."""
         self.analog_channels = sorted(c for c in set(channels) if 0 <= c < self.num_channels)
+        self._update_electrode_numbers()
         self._drop_analog_from_selection()
 
     def _drop_analog_from_selection(self):
         neural = self.neural_channels()
-        first = neural[0] if neural else 0
+        first = self.ordered_neural_channels()[0] if neural else 0
         if self.selected_channel not in neural:
             self.selected_channel = first
         self.overlay_channels = [c for c in self.overlay_channels if c in neural]
@@ -78,7 +146,14 @@ class StreamState:
             self.overlay_channels = [first]
 
     def channel_label(self, channel: int, prefix: str = "Ch") -> str:
-        """Display name for a 0-based channel, e.g. "Ch 3" or "Ch 3 (elec3)"."""
+        """
+        Display name for a 0-based channel.
+
+        Electrode numbering: "Elec 10 (Ch 125)". Channel numbering (or no electrode
+        number, e.g. analog inputs): "Ch 125 (elec1-10)".
+        """
+        if self.uses_electrode_numbers and channel in self.electrode_numbers:
+            return f"Elec {self.electrode_numbers[channel]} (Ch {channel + 1})"
         name = f"{prefix} {channel + 1}"
         if self.channel_labels and 0 <= channel < len(self.channel_labels):
             label = self.channel_labels[channel]

@@ -109,7 +109,7 @@ class ExportBinaryDialog(QDialog):
         self._ch_list = QListWidget()
         self._ch_list.setMaximumHeight(100)
         self._ch_list.setEnabled(False)
-        for i in self._state.neural_channels():
+        for i in self._state.ordered_neural_channels():
             item = QListWidgetItem(self._state.channel_label(i, "Channel"))
             item.setData(Qt.ItemDataRole.UserRole, i)
             item.setCheckState(
@@ -178,7 +178,7 @@ class ExportBinaryDialog(QDialog):
         if self._ch_displayed.isChecked():
             channels = self._state.get_active_channels()
         elif self._ch_all.isChecked():
-            channels = self._state.neural_channels()
+            channels = self._state.ordered_neural_channels()
         else:
             channels = [
                 self._ch_list.item(i).data(Qt.ItemDataRole.UserRole)
@@ -187,6 +187,9 @@ class ExportBinaryDialog(QDialog):
             ]
             if not channels:
                 channels = self._state.get_active_channels()
+
+        # Written in ascending order of the displayed numbers (electrode or channel)
+        channels = sorted(set(channels), key=self._state.display_number)
 
         return {
             "range": "current_view" if self._range_view.isChecked() else "full",

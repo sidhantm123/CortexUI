@@ -12,7 +12,7 @@ delete details that the code or git history already records.
 |---|---|
 | Active branch | `NSP_Basic` (not pushed; branched from `main` @ `beb2da4`) |
 | Last commit | `3507af0` Export binary at any processing stage, in chunks |
-| Tests | 84 passing: `tdtgui/bin/python -m unittest discover tests` |
+| Tests | 89 passing: `tdtgui/bin/python -m unittest discover tests` |
 | Next step | **Step 4: Spike Detection tab** (§4), after the user tests export |
 
 ### Done
@@ -25,6 +25,7 @@ delete details that the code or git history already records.
    message (`REMOVED_FILTER_TYPES`).
 5. (`3507af0`) Export at any stage: Apply blanking / Apply filter chain checkboxes; chunked full-recording export (`core/export.py`,
    `ExportWorker`); "current view" now exports exactly the view (it used to write the ~3× buffer).
+6. Electrode numbering app-wide by default; View → Number Channels By → Electrode / Channel (saved in QSettings).
 
 ### Branches
 - **`main`:** the TDT/Blackrock viewer with filters, FFT/PSD, probe map, export and `.ccf` info.
@@ -45,6 +46,9 @@ delete details that the code or git history already records.
   **Analog Ch.** panel below.
 
 **Rules the user confirmed:**
+- **Electrode numbers are the default everywhere** (the user thinks in electrodes). Channel/row numbers are the
+  opt-in alternative. Any new UI that shows or takes a channel number must use `StreamState.display_number` /
+  `channel_for_number` / `ordered_neural_channels` / `channel_label`, never `index + 1`.
 - **Never force a workflow.** Tabs can be used in any order, and steps (blanking, filters) can be added or removed freely.
   A control whose prerequisite is missing is disabled (greyed out), not hidden behind a wizard.
 - **Nothing rig-specific is hardcoded.** Use presets (e.g. ICMS/PNS/Tactor) that the user can edit or extend.
@@ -72,6 +76,13 @@ tests/                unittest; test_blackrock.py has write_nsx_23() to build sy
 ```
 
 ### Key concepts
+- **Numbering:**
+  - `StreamState.numbering` is a class-wide setting (`electrode` | `channel`), loaded from `QSettings` by the main
+    window.
+  - `electrode_numbers` is parsed from the trailing integer of each neural channel's label. It is None, with an
+    `electrode_note`, when any label lacks a number or the numbers repeat; channel numbers are then used and the menu
+    item is greyed out.
+  - Internal state always stays as 0-based channel indices.
 - **Analog vs neural channels:**
   - `StreamInfo.analog_channels` / `StreamState.analog_channels` hold the indices of analog inputs. They are auto-detected by
     `models.analog.is_analog_label` (label `ainp*` or electrode ID > 128), and the user can edit them via "Edit List…".

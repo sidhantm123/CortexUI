@@ -166,7 +166,7 @@ class SpectrumPanel(QWidget):
 
         # Update channel list
         self._channel_list.clear()
-        for i in state.neural_channels():
+        for i in state.ordered_neural_channels():
             item = QListWidgetItem(state.channel_label(i, "Channel"))
             item.setData(Qt.ItemDataRole.UserRole, i)
             self._channel_list.addItem(item)

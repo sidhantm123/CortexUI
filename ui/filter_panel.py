@@ -53,9 +53,10 @@ class ChannelGroupWidget(QWidget):
 
     assignment_changed = Signal()
 
-    def __init__(self, channels: List[int], parent=None):
+    def __init__(self, channels: List[int], numbers: Optional[Dict[int, int]] = None, parent=None):
         super().__init__(parent)
-        self._channels = list(channels)  # channel indices offered for grouping
+        self._channels = list(channels)  # channel indices offered for grouping, in display order
+        self._numbers = numbers or {}  # channel index -> number shown on its button
         self._num_channels = len(self._channels)
 
         # State
@@ -109,7 +110,7 @@ class ChannelGroupWidget(QWidget):
 
         cols = 8
         for pos, ch in enumerate(self._channels):
-            btn = QPushButton(str(ch + 1))  # 1-indexed display
+            btn = QPushButton(str(self._numbers.get(ch, ch + 1)))
             btn.setFixedSize(45, 28)
             btn.setCheckable(False)
             btn.setStyleSheet(self._channel_style(None))
@@ -270,6 +271,7 @@ class FilterEditDialog(QDialog):
         sample_rate: float = 24000,
         channels: Optional[List[int]] = None,
         probe: Optional[ProbeGeometry] = None,
+        numbers: Optional[Dict[int, int]] = None,
     ):
         super().__init__(parent)
         self.setWindowTitle("Edit Filter" if filter_config else "Add Filter")
@@ -277,6 +279,7 @@ class FilterEditDialog(QDialog):
 
         self._sample_rate = sample_rate
         self._channels = list(channels) if channels is not None else [0]
+        self._numbers = numbers
         self._config = filter_config
         self._probe = probe
 
@@ -344,7 +347,7 @@ class FilterEditDialog(QDialog):
         layout.addLayout(form)
 
         # Channel group widget (for CAR/CMR)
-        self._group_widget = ChannelGroupWidget(self._channels, self)
+        self._group_widget = ChannelGroupWidget(self._channels, self._numbers, self)
         self._group_widget.assignment_changed.connect(self._on_assignment_changed)
         self._group_widget.setVisible(False)
         layout.addWidget(self._group_widget)
@@ -621,7 +624,8 @@ class FilterPanel(QWidget):
         dialog = FilterEditDialog(
             self,
             sample_rate=self._state.sample_rate,
-            channels=self._state.neural_channels(),
+            channels=self._state.ordered_neural_channels(),
+            numbers={c: self._state.display_number(c) for c in self._state.neural_channels()},
             probe=self._probe,
         )
         if dialog.exec() == QDialog.DialogCode.Accepted:
@@ -649,7 +653,8 @@ class FilterPanel(QWidget):
                 self,
                 filter_config=config,
                 sample_rate=self._state.sample_rate,
-                channels=self._state.neural_channels(),
+                channels=self._state.ordered_neural_channels(),
+                numbers={c: self._state.display_number(c) for c in self._state.neural_channels()},
                 probe=self._probe,
             )
             if dialog.exec() == QDialog.DialogCode.Accepted:

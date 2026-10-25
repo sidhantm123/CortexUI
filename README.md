@@ -49,23 +49,24 @@ pyinstaller --clean tdt_viewer.spec
 ## Usage
 
 1. **Open** a recording folder. Streams are listed on the left; click one to display it.
-2. **Channels tab**: choose single or overlay mode, set the view range and toggle scatter (dot) mode. Each displayed channel's Vrms (of the visible data, blanked samples excluded) is shown in the top-right corner of the plot.
-3. **Navigate**: scroll to zoom, drag to pan, double-click to reset.
-4. **Filters tab**: add filters, reorder them (they run top to bottom) and bypass them individually or all at once.
+2. **Numbering**: channels are numbered by **electrode** by default (the trailing number of each label, e.g. `elec1-10` → electrode 10), everywhere in the app. **View → Number Channels By → Channel** switches to recording order (Ch 1 = first channel in the file). If a recording's labels have no unique electrode numbers (e.g. TDT), channel numbers are used.
+3. **Channels tab**: choose single or overlay mode, set the view range and toggle scatter (dot) mode. Each displayed channel's Vrms (of the visible data, blanked samples excluded) is shown in the top-right corner of the plot.
+4. **Navigate**: scroll to zoom, drag to pan, double-click to reset.
+5. **Filters tab**: add filters, reorder them (they run top to bottom) and bypass them individually or all at once.
    - For **CAR/CMR**, create subgroups and click channels to assign them. Every channel must be assigned before you can confirm.
-5. **Analog Ch. panel** (bottom right) and analog plot (below the main plot):
+6. **Analog Ch. panel** (bottom right) and analog plot (below the main plot):
    - **Channel selection** picks the analog input to show. **Edit List…** changes which channels count as analog; those are left out of the electrode lists and CAR/CMR.
    - **Assign Channel** maps the input to a modality and sets its polarity (active high/low), threshold (Auto = midpoint of idle and active levels), merge gap (pulses closer than this form one event) and minimum duration.
    - **Detect Events** scans every assigned input. Events are numbered per modality and listed in the table.
    - **Event selection** or clicking a row jumps to that event. **Sync to Raw Data Viewer** links the two plots' time axes.
    - **Correct an event** by double-clicking its Onset/Offset cell or dragging its dashed line on the analog plot. Edited times are bold; right-click a row to reset.
-6. **Blanking tab** (needs detected events): one sub-tab per modality.
+7. **Blanking tab** (needs detected events): one sub-tab per modality.
    - **Basic** blanks every electrode from onset − pre-pad to offset + post-pad and fills the gap linearly.
    - **Advanced** blanks from onset − pre-pad until, per channel, *N* consecutive windows have spike-band (250–5000 Hz) RMS below *k* × that channel's baseline (measured on clean stretches ≥ 3 s from any event), within the min/max post-pad. Choose trials and linear or cubic interpolation.
    - **Apply Blanking** / **Remove Blanking**. Blanking runs before the filter chain in the plot, Analysis and Export; blanked spans are shaded grey.
-7. **Analysis tab**: pick FFT or PSD, choose an interval (type it in or drag on the plot), then click **Analyze**. Results appear in the Spectrum tab.
-8. **File → Export → Stream as Binary**: pick the range (current view or full recording), channels, scale (default ×1e6, i.e. µV per count), layout and extension. **Processing** chooses the stage: tick **Apply blanking** and/or **Apply filter chain** (untick both for raw). Full recordings are exported in chunks, so memory stays around 1.5 GB even for 8 GB files. A `.txt` summary next to the file records the range, channels, scale, clipped samples and exactly which blanking and filters were applied.
-9. **File → Save/Load Session** stores settings as JSON. The recording must still exist at its original path to reload a session.
+8. **Analysis tab**: pick FFT or PSD, choose an interval (type it in or drag on the plot), then click **Analyze**. Results appear in the Spectrum tab.
+9. **File → Export → Stream as Binary**: pick the range (current view or full recording), channels, scale (default ×1e6, i.e. µV per count), layout and extension. **Processing** chooses the stage: tick **Apply blanking** and/or **Apply filter chain** (untick both for raw). Full recordings are exported in chunks, so memory stays around 1.5 GB even for 8 GB files. A `.txt` summary next to the file records the range, channels, scale, clipped samples and exactly which blanking and filters were applied.
+10. **File → Save/Load Session** stores settings as JSON. The recording must still exist at its original path to reload a session.
 
 ## Project structure
 
