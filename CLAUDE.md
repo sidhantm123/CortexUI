@@ -11,9 +11,9 @@ delete details that the code or git history already records.
 | | |
 |---|---|
 | Active branch | `NSP_Basic` (not pushed; branched from `main` @ `beb2da4`) |
-| Last commit | `de192d3` Compute Vrms on visible clean data; remove the zeroing Vrms filter |
+| Last commit | `3507af0` Export binary at any processing stage, in chunks |
 | Tests | 84 passing: `tdtgui/bin/python -m unittest discover tests` |
-| Next step | **Step 4: Spike Detection tab** (§4), after the user tests step 3 |
+| Next step | **Step 4: Spike Detection tab** (§4), after the user tests export |
 
 ### Done
 1. Analog input viewer and event detection (`78664d0`).
@@ -23,7 +23,7 @@ delete details that the code or git history already records.
 4. (`de192d3`) Vrms is computed on the visible data with blanked samples excluded, and shown in the Time Series plot's top-right
    corner (moved out of the Channels panel). The zeroing Vrms-threshold filter is removed; old sessions drop it with a
    message (`REMOVED_FILTER_TYPES`).
-5. Export at any stage: Apply blanking / Apply filter chain checkboxes; chunked full-recording export (`core/export.py`,
+5. (`3507af0`) Export at any stage: Apply blanking / Apply filter chain checkboxes; chunked full-recording export (`core/export.py`,
    `ExportWorker`); "current view" now exports exactly the view (it used to write the ~3× buffer).
 
 ### Branches
