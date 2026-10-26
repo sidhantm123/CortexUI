@@ -11,7 +11,7 @@ delete details that the code or git history already records.
 | | |
 |---|---|
 | Active branch | `NSP_Basic` (not pushed; branched from `main` @ `beb2da4`) |
-| Last commit | `8722e70` Type export channels as ranges; warn about out-of-date blanking |
+| Last commit | `4d6974c` Zoom time only; fit amplitude to the visible data |
 | Tests | 93 passing: `tdtgui/bin/python -m unittest discover tests` |
 | Next step | **Step 4: Spike Detection tab** (§4), after the user tests numbering + export |
 
