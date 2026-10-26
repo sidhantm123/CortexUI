@@ -51,7 +51,7 @@ pyinstaller --clean tdt_viewer.spec
 1. **Open** a recording folder. Streams are listed on the left; click one to display it.
 2. **Numbering**: channels are numbered by **electrode** by default (the trailing number of each label, e.g. `elec1-10` → electrode 10), everywhere in the app. **View → Number Channels By → Channel** switches to recording order (Ch 1 = first channel in the file). If a recording's labels have no unique electrode numbers (e.g. TDT), channel numbers are used.
 3. **Channels tab**: choose single or overlay mode, set the view range and toggle scatter (dot) mode. Each displayed channel's Vrms (of the visible data, blanked samples excluded) is shown in the top-right corner of the plot.
-4. **Navigate**: scroll to zoom, drag to pan, double-click to reset.
+4. **Navigate**: scroll to zoom time, drag to pan; the amplitude axis always fits the visible data. **Ctrl/⌘ + scroll** zooms amplitude (e.g. to see small spikes next to an artifact); double-click fits it to the data again.
 5. **Filters tab**: add filters, reorder them (they run top to bottom) and bypass them individually or all at once.
    - For **CAR/CMR**, create subgroups and click channels to assign them. Every channel must be assigned before you can confirm.
 6. **Analog Ch. panel** (bottom right) and analog plot (below the main plot):

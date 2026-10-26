@@ -132,6 +132,12 @@ tests/                unittest; test_blackrock.py has write_nsx_23() to build sy
   - With CAR/CMR active, all channels are loaded.
   - On RP01 a full blanked export of 128 ch takes 141 s, writes 7.4 GB and peaks at ~1.5 GB RSS. macOS `ru_maxrss`
     is in bytes.
+- **Zoom (`TimeZoomViewBox` in `ui/plot_widget.py`, used by Time Series and the analog plot):**
+  - The wheel and drags act on x only (`setMouseEnabled(y=False)`).
+  - y auto-fits to the samples inside the visible x-window (`setAutoVisible(y=True)`).
+  - Ctrl/⌘+wheel scales y and turns y auto-fit off. On macOS, ⌘ is `ControlModifier` and Ctrl is `MetaModifier`.
+  - A double-click (pyqtgraph sends it to `mouseClickEvent` with `ev.double()`) turns y auto-fit back on.
+  - Previously the wheel zoomed y too, which permanently switched y auto-range off.
 - **Plotting:**
   - Only a buffer of about 3× the view is read from disk, and it is min/max-decimated to ≤ 8000 points.
   - The analog plot keeps its own buffer and `WorkerManager`. It is x-linked to the main plot when Sync is on.

@@ -8,7 +8,7 @@ from PySide6.QtWidgets import QWidget, QVBoxLayout
 import pyqtgraph as pg
 
 from models.analog import StimEvent
-from .plot_widget import LEFT_AXIS_WIDTH
+from .plot_widget import LEFT_AXIS_WIDTH, TIME_PLOT_HINT, TimeZoomViewBox, setup_time_axes
 
 # One color per modality, assigned in the order modalities appear
 MODALITY_COLORS = ["#d62728", "#1f77b4", "#2ca02c", "#9467bd", "#ff7f0e", "#8c564b"]
@@ -34,15 +34,15 @@ class AnalogPlot(QWidget):
 
         self._graphics = pg.GraphicsLayoutWidget()
         self._graphics.setBackground("w")
+        self._graphics.setToolTip(TIME_PLOT_HINT)
         layout.addWidget(self._graphics)
 
-        self._plot = self._graphics.addPlot(row=0, col=0)
+        self._plot = self._graphics.addPlot(row=0, col=0, viewBox=TimeZoomViewBox())
         self._plot.setLabel("bottom", "Time", units="s")
         self._plot.setLabel("left", "Analog", units="V")
         self._plot.showGrid(x=True, y=True, alpha=0.3)
         self._plot.getAxis("left").setWidth(LEFT_AXIS_WIDTH)
-        self._plot.getViewBox().setMouseMode(pg.ViewBox.PanMode)
-        self._plot.enableAutoRange(axis="y", enable=True)
+        setup_time_axes(self._plot)
         self._plot.sigRangeChanged.connect(self._on_range_changed)
 
         self._curve = self._plot.plot(pen=pg.mkPen("#444444", width=1))

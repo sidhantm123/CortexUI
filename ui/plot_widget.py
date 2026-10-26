@@ -16,6 +16,53 @@ pg.setConfigOptions(
 )
 
 
+# Mouse help shown as the tooltip of time-series plots
+TIME_PLOT_HINT = (
+    "Scroll: zoom time · Drag: pan · Ctrl/⌘+scroll: zoom amplitude · "
+    "Double-click: fit amplitude to the visible data"
+)
+
+# Ctrl on Windows/Linux; on macOS Qt reports ⌘ as Control and Ctrl as Meta, so accept both
+_AMPLITUDE_ZOOM_KEYS = Qt.KeyboardModifier.ControlModifier | Qt.KeyboardModifier.MetaModifier
+
+
+class TimeZoomViewBox(pg.ViewBox):
+    """
+    ViewBox for time series: the wheel zooms time only, while y fits the visible data.
+
+    Ctrl/⌘ + wheel zooms amplitude instead, which turns y auto-fit off until a
+    double-click turns it back on.
+    """
+
+    def wheelEvent(self, ev, axis=None):
+        if ev.modifiers() & _AMPLITUDE_ZOOM_KEYS:
+            s = 1.02 ** (ev.delta() * self.state["wheelScaleFactor"])
+            center = pg.Point(pg.functions.invertQTransform(self.childGroup.transform()).map(ev.pos()))
+            self._resetTarget()
+            self.scaleBy([None, s], center)
+            self.enableAutoRange(axis=pg.ViewBox.YAxis, enable=False)
+            ev.accept()
+            self.sigRangeChangedManually.emit([False, True])
+        else:
+            super().wheelEvent(ev, axis=0)
+
+    def mouseClickEvent(self, ev):
+        # pyqtgraph delivers double-clicks here (ev.double()), not to mouseDoubleClickEvent
+        if ev.double() and ev.button() == Qt.MouseButton.LeftButton:
+            self.enableAutoRange(axis=pg.ViewBox.YAxis, enable=True)
+            ev.accept()
+            return
+        super().mouseClickEvent(ev)
+
+
+def setup_time_axes(plot: pg.PlotItem):
+    """Mouse acts on time only; y auto-fits to the samples inside the visible time window."""
+    plot.setMouseEnabled(x=True, y=False)
+    plot.enableAutoRange(axis="y", enable=True)
+    plot.setAutoVisible(y=True)
+    plot.getViewBox().setMouseMode(pg.ViewBox.PanMode)
+
+
 # Left axis width shared with the analog plot (x-linked plots align by screen position)
 LEFT_AXIS_WIDTH = 70
 
@@ -104,28 +151,23 @@ class TimeSeriesPlot(QWidget):
         # Create graphics layout widget
         self._graphics_widget = pg.GraphicsLayoutWidget()
         self._graphics_widget.setBackground("w")
+        self._graphics_widget.setToolTip(TIME_PLOT_HINT)
         layout.addWidget(self._graphics_widget)
 
     def _setup_plot(self):
         """Set up the plot axes."""
-        self._plot = self._graphics_widget.addPlot(row=0, col=0)
+        self._plot = self._graphics_widget.addPlot(row=0, col=0, viewBox=TimeZoomViewBox())
         self._plot.setLabel("bottom", "Time", units="s")
         self._plot.setLabel("left", "Amplitude")
         self._plot.showGrid(x=True, y=True, alpha=0.3)
         # Fixed axis width so the linked analog plot lines up in time
         self._plot.getAxis("left").setWidth(LEFT_AXIS_WIDTH)
 
-        # Enable mouse interaction
-        self._plot.setMouseEnabled(x=True, y=True)
-        self._plot.enableAutoRange(axis="y", enable=True)
+        # Scroll/drag act on time; y fits the visible data (Ctrl/⌘+scroll zooms amplitude)
+        setup_time_axes(self._plot)
 
         # Connect signals
         self._plot.sigRangeChanged.connect(self._on_range_changed)
-
-        # Set up view box for custom interactions
-        # PanMode: left-drag = pan, right-drag = zoom rect, scroll = zoom
-        vb = self._plot.getViewBox()
-        vb.setMouseMode(pg.ViewBox.PanMode)
 
     def plot_item(self) -> pg.PlotItem:
         """The underlying PlotItem (used to link other plots' x-axes)."""
@@ -327,11 +369,6 @@ class TimeSeriesPlot(QWidget):
         if self._selection_region is not None:
             region = self._selection_region.getRegion()
             self.region_selected.emit(region[0], region[1])
-
-    def mouseDoubleClickEvent(self, event):
-        """Handle double-click to reset view."""
-        self.reset_view()
-        super().mouseDoubleClickEvent(event)
 
     def clear(self):
         """Clear all data from the plot."""
