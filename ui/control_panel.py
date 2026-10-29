@@ -106,7 +106,7 @@ class ControlPanel(QWidget):
         self._single_group = QGroupBox("Channel Selection")
         single_layout = QHBoxLayout(self._single_group)
 
-        single_layout.addWidget(QLabel("Channel:"))
+        single_layout.addWidget(QLabel("Electrode:"))
         self._channel_spin = NumberSpinBox()
         self._channel_spin.setMinimum(1)
         self._channel_spin.setMaximum(1)

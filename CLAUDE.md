@@ -179,6 +179,13 @@ tests/                unittest; test_blackrock.py has write_nsx_23() to build sy
 - **Later step:** waveform snippets (overlaid ~2 ms cut-outs).
 
 ### Later / unscheduled
+- **CAR/CMR grouping by array (user request, 2026-10-27):**
+  - Add "Auto-group by array" to the CAR/CMR subgroup panel, e.g. SG1 = lateral (elec 1–64, `elec1-*`) and SG2 =
+    medial (elec 65–128, `elec2-*`). Derive the arrays from the label bank (`elecA-NN` → A), not hardcoded ranges.
+  - The panel must say whether its numbers are electrode or channel numbers, following View → Number Channels By.
+- **Probe map takes priority (user request, 2026-10-27):** once probe-map import is fully built out, a loaded probe map
+  overrides everything else: electrode numbering, array/shank grouping and positions. It wins over label parsing and
+  over channel order.
 - A "Plots" tab: the user intends to add it later. Don't build it yet.
 - Loading `.nev` spikes/events.
 - Shading events on the main plot (currently only on the analog plot).
