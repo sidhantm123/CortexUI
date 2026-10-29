@@ -11,7 +11,7 @@ delete details that the code or git history already records.
 | | |
 |---|---|
 | Active branch | `NSP_Basic` (not pushed; branched from `main` @ `beb2da4`) |
-| Last commit | `4d6974c` Zoom time only; fit amplitude to the visible data |
+| Last commit | `4b8836b` Add Spike Detection tab: k-sigma threshold line and spike markers |
 | Tests | 103 passing: `tdtgui/bin/python -m unittest discover tests` |
 | Next step | **Step 4b** (Detect Spikes + Raster): the user wants to discuss changes after testing 4a |
 
@@ -29,7 +29,7 @@ delete details that the code or git history already records.
    QSettings).
 7. (`8722e70`) Export dialog: typed channel selection (`ui/channel_spec.py`, in the active numbering, written ascending) with All
    Channels / Displayed buttons and a live preview, plus a warning when the applied blanking is stale.
-8. Step 4a, Spike Detection tab:
+8. (`4b8836b`) Step 4a, Spike Detection tab:
    - k·σ threshold (σ = median(|x|)/0.6745 in view, blanked samples excluded), polarity, refractory.
    - A draggable threshold line (Single mode) and markers on troughs in view.
    - Hints for a missing HP/BP filter and short views.
