@@ -11,7 +11,7 @@ delete details that the code or git history already records.
 | | |
 |---|---|
 | Active branch | `NSP_Basic` (not pushed; branched from `main` @ `beb2da4`) |
-| Last commit | `4b8836b` Add Spike Detection tab: k-sigma threshold line and spike markers |
+| Last commit | `75b6684` Spike tab: keep only the threshold line; rename to k x sigma |
 | Tests | 103 passing: `tdtgui/bin/python -m unittest discover tests` |
 | Next step | **Step 4b** (Detect Spikes + Raster): the user wants to discuss changes after testing 4a |
 
