@@ -31,7 +31,8 @@ delete details that the code or git history already records.
    Channels / Displayed buttons and a live preview, plus a warning when the applied blanking is stale.
 8. (`4b8836b`) Step 4a, Spike Detection tab:
    - k·σ threshold (σ = median(|x|)/0.6745 in view, blanked samples excluded), polarity, refractory.
-   - A draggable threshold line (Single mode) and markers on troughs in view.
+   - A draggable threshold line (Single mode). The user then asked to remove the trace markers and the info line, and
+     the label was renamed "Threshold (k × σ)": σ is not Vrms.
    - Hints for a missing HP/BP filter and short views.
 
 ### Branches
@@ -148,9 +149,14 @@ tests/                unittest; test_blackrock.py has write_nsx_23() to build sy
   - `SpikeSettings` lives per stream in `StreamState` and is saved in the session.
   - `MainWindow._update_spike_overlay` runs in `_rerender_from_buffer` on the full-resolution visible slice, only while
     the Spike tab is current or "show everywhere" is on.
+  - It computes σ for the selected channel only and places the line. **No markers or info line**: the user removed them.
+    `detect_crossings`/`align_to_peak` remain for 4b.
+  - **σ vs whole recording (explained to the user):** same formula and pipeline. The panel σ follows the view. 4b as
+    planned freezes one σ per electrode from the view at click time, and the user may revisit this (e.g. σ from clean
+    stretches across the recording, or per chunk).
   - Threshold lines are `ignoreBounds` InfiniteLines, so they don't affect y auto-fit.
   - Line drags set k = |y|/σ, coalesced by a 30 ms timer. On RP01 Elec 10 (BP 250–5000, 10 s view): σ 7.7 µV, 19
-    crossings, 22 ms per re-render.
+    crossings.
 - **Plotting:**
   - Only a buffer of about 3× the view is read from disk, and it is min/max-decimated to ≤ 8000 points.
   - The analog plot keeps its own buffer and `WorkerManager`. It is x-linked to the main plot when Sync is on.

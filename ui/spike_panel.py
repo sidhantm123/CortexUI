@@ -19,7 +19,7 @@ from dsp.spikes import NEGATIVE, POSITIVE, BOTH
 
 
 class SpikePanel(QWidget):
-    """Threshold settings; the threshold line and markers are drawn on the Time Series plot."""
+    """Threshold settings; the threshold line is drawn on the Time Series plot."""
 
     settings_changed = Signal()
 
@@ -42,11 +42,13 @@ class SpikePanel(QWidget):
         self._k_spin.setSingleStep(0.25)
         self._k_spin.setSuffix(" σ")
         self._k_spin.setToolTip(
-            "Spikes are crossings of k × σ, with σ = median(|x|) / 0.6745 of the filtered, "
-            "blanked data in view (blanked samples excluded). Drag the line on the plot to change k."
+            "Spikes are crossings of k × σ. σ = median(|x|) / 0.6745 of the filtered, blanked data "
+            "in view (blanked samples excluded): a noise estimate that spikes barely affect, unlike "
+            "Vrms (shown in the plot corner), which spikes and artifacts inflate. "
+            "Drag the dashed line on the plot to change k."
         )
         self._k_spin.valueChanged.connect(self._on_changed)
-        form.addRow("Vrms threshold:", self._k_spin)
+        form.addRow("Threshold (k × σ):", self._k_spin)
 
         self._polarity_combo = QComboBox()
         self._polarity_combo.addItem("Negative (below −kσ)", NEGATIVE)
@@ -65,14 +67,9 @@ class SpikePanel(QWidget):
         form.addRow("Refractory:", self._refractory_spin)
         layout.addWidget(group)
 
-        self._everywhere_check = QCheckBox("Show threshold and markers on other tabs too")
+        self._everywhere_check = QCheckBox("Show threshold line on other tabs too")
         self._everywhere_check.toggled.connect(self._on_changed)
         layout.addWidget(self._everywhere_check)
-
-        self._info_label = QLabel("")
-        self._info_label.setWordWrap(True)
-        self._info_label.setStyleSheet("font-size: 11px;")
-        layout.addWidget(self._info_label)
 
         self._hint_label = QLabel("")
         self._hint_label.setWordWrap(True)
@@ -102,9 +99,6 @@ class SpikePanel(QWidget):
     def set_k(self, k: float):
         """Set k from the dragged threshold line."""
         self._k_spin.setValue(k)
-
-    def set_info(self, text: str):
-        self._info_label.setText(text)
 
     def set_hints(self, hints: List[str]):
         self._hint_label.setText("\n".join(hints))

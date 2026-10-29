@@ -135,12 +135,9 @@ class TimeSeriesPlot(QWidget):
         # Shaded blanked spans
         self._blank_items: List[pg.LinearRegionItem] = []
 
-        # Spike threshold lines (draggable) and crossing markers
+        # Spike threshold lines (draggable)
         self._threshold_lines: List[pg.InfiniteLine] = []
         self._dragging_threshold = False
-        self._spike_markers = pg.ScatterPlotItem(size=7, pen=pg.mkPen(None))
-        self._spike_markers.setZValue(20)
-        self._plot.addItem(self._spike_markers, ignoreBounds=True)
 
         # Vrms readout in the top-right corner (doesn't take mouse input)
         vb = self._plot.getViewBox()
@@ -320,14 +317,6 @@ class TimeSeriesPlot(QWidget):
     def _on_threshold_drag_finished(self, line):
         self._dragging_threshold = False
         self.threshold_dragged.emit(abs(float(line.value())))
-
-    def set_spike_markers(self, x: np.ndarray, y: np.ndarray, colors: List[str]):
-        """Dots at detected spikes (one color per point); empty arrays hide them."""
-        if len(x) == 0:
-            self._spike_markers.setData([], [])
-            return
-        brushes = [pg.mkBrush(c) for c in colors]
-        self._spike_markers.setData(x=x, y=y, brush=brushes, symbol="o")
 
     def set_blank_spans(self, spans: List[Tuple[float, float]]):
         """Lightly shade blanked time spans (at most MAX_BLANK_SPANS)."""

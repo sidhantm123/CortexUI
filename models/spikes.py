@@ -9,7 +9,7 @@ class SpikeSettings:
     k: float = 4.75
     polarity: str = "negative"  # negative | positive | both
     refractory_ms: float = 2.0
-    show_everywhere: bool = False  # keep threshold line + markers visible outside the Spike Detection tab
+    show_everywhere: bool = False  # keep the threshold line visible outside the Spike Detection tab
 
     def to_dict(self) -> dict:
         return asdict(self)
