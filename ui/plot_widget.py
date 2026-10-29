@@ -110,6 +110,7 @@ class TimeSeriesPlot(QWidget):
     # Signals
     view_range_changed = Signal(float, float)  # start, end in seconds
     region_selected = Signal(float, float)  # start, end for FFT selection
+    threshold_dragged = Signal(float)  # |y| of a dragged threshold line (volts)
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -133,6 +134,13 @@ class TimeSeriesPlot(QWidget):
 
         # Shaded blanked spans
         self._blank_items: List[pg.LinearRegionItem] = []
+
+        # Spike threshold lines (draggable) and crossing markers
+        self._threshold_lines: List[pg.InfiniteLine] = []
+        self._dragging_threshold = False
+        self._spike_markers = pg.ScatterPlotItem(size=7, pen=pg.mkPen(None))
+        self._spike_markers.setZValue(20)
+        self._plot.addItem(self._spike_markers, ignoreBounds=True)
 
         # Vrms readout in the top-right corner (doesn't take mouse input)
         vb = self._plot.getViewBox()
@@ -276,6 +284,50 @@ class TimeSeriesPlot(QWidget):
             '<div style="background-color: rgba(255,255,255,190); text-align:right;">'
             + "<br>".join(lines) + "</div>" if lines else ""
         )
+
+    def set_threshold_lines(self, levels: List[float]):
+        """
+        Show draggable horizontal threshold lines at these y values (volts); [] hides them.
+        Positions aren't touched while the user is dragging one.
+        """
+        if self._dragging_threshold:
+            return
+        while len(self._threshold_lines) < len(levels):
+            line = pg.InfiniteLine(
+                angle=0, movable=True,
+                pen=pg.mkPen("#c0392b", width=1.5, style=Qt.PenStyle.DashLine),
+                hoverPen=pg.mkPen("#c0392b", width=3),
+            )
+            line.setZValue(30)
+            line.setToolTip("Spike threshold — drag to change k")
+            line.sigDragged.connect(self._on_threshold_dragging)
+            line.sigPositionChangeFinished.connect(self._on_threshold_drag_finished)
+            self._plot.addItem(line, ignoreBounds=True)
+            self._threshold_lines.append(line)
+        for i, line in enumerate(self._threshold_lines):
+            if i < len(levels):
+                line.blockSignals(True)
+                line.setValue(levels[i])
+                line.blockSignals(False)
+                line.show()
+            else:
+                line.hide()
+
+    def _on_threshold_dragging(self, line):
+        self._dragging_threshold = True
+        self.threshold_dragged.emit(abs(float(line.value())))
+
+    def _on_threshold_drag_finished(self, line):
+        self._dragging_threshold = False
+        self.threshold_dragged.emit(abs(float(line.value())))
+
+    def set_spike_markers(self, x: np.ndarray, y: np.ndarray, colors: List[str]):
+        """Dots at detected spikes (one color per point); empty arrays hide them."""
+        if len(x) == 0:
+            self._spike_markers.setData([], [])
+            return
+        brushes = [pg.mkBrush(c) for c in colors]
+        self._spike_markers.setData(x=x, y=y, brush=brushes, symbol="o")
 
     def set_blank_spans(self, spans: List[Tuple[float, float]]):
         """Lightly shade blanked time spans (at most MAX_BLANK_SPANS)."""

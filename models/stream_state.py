@@ -4,6 +4,7 @@ from dataclasses import dataclass, field
 from enum import Enum
 from typing import ClassVar, Dict, List, Optional, Tuple
 from .filter_config import FilterConfig, REMOVED_FILTER_TYPES
+from .spikes import SpikeSettings
 
 
 class ChannelMode(Enum):
@@ -82,6 +83,9 @@ class StreamState:
     fft_channels: List[int] = field(default_factory=list)
     psd_nperseg: int = 1024
     psd_overlap: float = 0.5
+
+    # Spike threshold settings
+    spike_settings: SpikeSettings = field(default_factory=SpikeSettings)
 
     # App-wide numbering preference (set by the main window from user settings)
     numbering: ClassVar[str] = NUMBER_BY_ELECTRODE
@@ -229,6 +233,7 @@ class StreamState:
             "fft_channels": self.fft_channels,
             "psd_nperseg": self.psd_nperseg,
             "psd_overlap": self.psd_overlap,
+            "spike_settings": self.spike_settings.to_dict(),
         }
 
     @classmethod
@@ -257,4 +262,5 @@ class StreamState:
         state.fft_channels = data.get("fft_channels", [])
         state.psd_nperseg = data.get("psd_nperseg", 1024)
         state.psd_overlap = data.get("psd_overlap", 0.5)
+        state.spike_settings = SpikeSettings.from_dict(data.get("spike_settings"))
         return state

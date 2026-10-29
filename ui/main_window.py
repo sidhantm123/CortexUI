@@ -40,6 +40,7 @@ from models import StreamState, ChannelMode, NUMBER_BY_ELECTRODE, NUMBER_BY_CHAN
 from dsp import apply_filter_chain, decimate_for_display
 from dsp.blanking import apply_blanking, basic_result, blank_spans, blank_mask
 from dsp.metrics import compute_vrms
+from dsp.spikes import robust_sigma, detect_crossings, align_to_peak, NEGATIVE, POSITIVE, BOTH
 from models.blanking import ADVANCED
 from models.filter_config import FilterType
 
@@ -52,6 +53,8 @@ from .probe_map_widget import ProbeMapWidget
 from .analog_plot import AnalogPlot
 from .analog_panel import AnalogPanel
 from .blanking_panel import BlankingPanel
+from .spike_panel import SpikePanel
+from .plot_widget import CHANNEL_COLORS, format_volts
 
 
 def _placeholder_tab(text: str) -> QWidget:
@@ -196,10 +199,9 @@ class MainWindow(QMainWindow):
         self._filter_panel = FilterPanel()
         self._control_tabs.addTab(self._filter_panel, "Filters")
 
-        # Spike detection tab (later step)
-        self._control_tabs.addTab(
-            _placeholder_tab("Spike Detection — coming in a later step"), "Spike Detection"
-        )
+        # Spike detection tab
+        self._spike_panel = SpikePanel()
+        self._spike_tab_index = self._control_tabs.addTab(self._spike_panel, "Spike Detection")
 
         # Spectrum analysis tab
         self._spectrum_panel = SpectrumPanel()
@@ -395,6 +397,17 @@ class MainWindow(QMainWindow):
         self._analog_panel.events_edited.connect(self._on_event_edited)
         self._analog_plot.event_time_dragged.connect(self._on_event_dragged)
 
+        # Spike threshold
+        # Coalesce rapid changes (dragging the threshold line) into one re-render per ~30 ms
+        self._spike_timer = QTimer(self)
+        self._spike_timer.setSingleShot(True)
+        self._spike_timer.setInterval(30)
+        self._spike_timer.timeout.connect(self._rerender_current)
+        self._spike_panel.settings_changed.connect(self._spike_timer.start)
+        self._control_tabs.currentChanged.connect(lambda _i: self._rerender_current())
+        self._time_plot.threshold_dragged.connect(self._on_threshold_dragged)
+        self._sigma_selected: Optional[float] = None  # σ of the selected channel in view
+
         # Blanking
         self._blanking_panel.apply_requested.connect(self._on_apply_blanking)
         self._blanking_panel.remove_requested.connect(self._on_remove_blanking)
@@ -472,6 +485,7 @@ class MainWindow(QMainWindow):
             self._control_panel.set_state(state)
             self._filter_panel.set_state(state)
             self._spectrum_panel.set_state(state)
+            self._spike_panel.set_state(state)
             self._analog_panel.refresh()
             self._update_numbering_actions()
 
@@ -768,6 +782,7 @@ class MainWindow(QMainWindow):
         state.vrms_values = vrms
         self._time_plot.set_vrms([(state.channel_label(c), vrms.get(c)) for c in channels])
         self._probe_map.update_vrms(vrms)
+        self._update_spike_overlay(state, channels, data_view, time_view, mask_view, end - start)
 
         n = data_view.shape[1] if data_view.ndim > 1 else len(data_view)
         if n > self.MAX_PLOT_POINTS:
@@ -1013,6 +1028,96 @@ class MainWindow(QMainWindow):
             self._on_view_range_requested(start, end)
         if not self._analog_panel.is_synced():
             self._analog_plot.set_view_range(start, end)
+
+    # ------------------------------------------------------------------ spike threshold
+
+    MAX_SPIKE_MARKERS = 5000
+
+    def _rerender_current(self):
+        state = self._app_state.get_current_state()
+        if state is not None and self._filtered_data is not None:
+            self._rerender_from_buffer(*state.get_view_range(), state)
+
+    def _spike_overlay_visible(self, state) -> bool:
+        return (
+            self._control_tabs.currentIndex() == self._spike_tab_index
+            or state.spike_settings.show_everywhere
+        )
+
+    def _update_spike_overlay(self, state, channels, data_view, time_view, mask_view, view_s):
+        """Threshold line(s), crossing markers and the panel's info for the visible data."""
+        if not self._spike_overlay_visible(state):
+            self._time_plot.set_threshold_lines([])
+            self._time_plot.set_spike_markers(np.zeros(0), np.zeros(0), [])
+            return
+
+        s = state.spike_settings
+        fs = state.sample_rate
+        data = np.atleast_2d(data_view)
+        mask = np.atleast_2d(mask_view) if mask_view is not None else None
+        sigma = robust_sigma(data, mask)
+        thresholds = s.k * sigma
+        crossings = detect_crossings(
+            data, thresholds, s.polarity, int(round(s.refractory_ms * 1e-3 * fs)), mask
+        )
+
+        xs, ys, colors = [], [], []
+        for row, idx in enumerate(crossings):
+            peaks = align_to_peak(data[row], idx, s.polarity, int(round(1e-3 * fs)))
+            xs.append(time_view[peaks])
+            ys.append(data[row, peaks])
+            colors += [CHANNEL_COLORS[row % len(CHANNEL_COLORS)]] * len(peaks)
+        x = np.concatenate(xs) if xs else np.zeros(0)
+        y = np.concatenate(ys) if ys else np.zeros(0)
+        capped = x.size > self.MAX_SPIKE_MARKERS
+        if capped:
+            x, y, colors = x[: self.MAX_SPIKE_MARKERS], y[: self.MAX_SPIKE_MARKERS], colors[: self.MAX_SPIKE_MARKERS]
+        self._time_plot.set_spike_markers(x, y, colors)
+
+        # Lines and info for the selected channel (Single mode only)
+        single = state.channel_mode == ChannelMode.SINGLE
+        self._sigma_selected = float(sigma[0]) if single and np.isfinite(sigma[0]) else None
+        if self._sigma_selected is not None:
+            thr = s.k * self._sigma_selected
+            levels = {NEGATIVE: [-thr], POSITIVE: [thr], BOTH: [-thr, thr]}[s.polarity]
+            self._time_plot.set_threshold_lines(levels)
+        else:
+            self._time_plot.set_threshold_lines([])
+
+        sign = {NEGATIVE: "−", POSITIVE: "+", BOTH: "±"}[s.polarity]
+        lines = []
+        for row, ch in enumerate(channels):
+            sg = sigma[row]
+            if not np.isfinite(sg):
+                lines.append(f"{state.channel_label(ch)}: fully blanked in view")
+                continue
+            lines.append(
+                f"{state.channel_label(ch)}: σ = {format_volts(sg)} (in view) → threshold "
+                f"{sign}{format_volts(s.k * sg)} · {len(crossings[row])} crossings in view"
+            )
+        if capped:
+            lines.append(f"Showing the first {self.MAX_SPIKE_MARKERS} markers.")
+        if not single:
+            lines.append("The draggable threshold line is shown in Single Channel mode.")
+        self._spike_panel.set_info("\n".join(lines))
+
+        hints = []
+        active = [] if state.global_bypass else [f for f in state.filters if not f.bypassed]
+        if not any(f.filter_type in (FilterType.HIGHPASS, FilterType.BANDPASS) for f in active):
+            hints.append(
+                "No high-pass or band-pass filter is active — thresholds on broadband data "
+                "aren't meaningful (e.g. add a 250–5000 Hz band-pass)."
+            )
+        if view_s < 5.0:
+            hints.append(f"View is {view_s:.2f} s — σ from under 5 s of data is noisy.")
+        self._spike_panel.set_hints(hints)
+
+    @Slot(float)
+    def _on_threshold_dragged(self, level: float):
+        """The threshold line was dragged: k = |y| / σ of the selected channel."""
+        if not self._sigma_selected:
+            return
+        self._spike_panel.set_k(level / self._sigma_selected)
 
     # ------------------------------------------------------------------ blanking
 

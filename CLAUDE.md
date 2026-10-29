@@ -12,8 +12,8 @@ delete details that the code or git history already records.
 |---|---|
 | Active branch | `NSP_Basic` (not pushed; branched from `main` @ `beb2da4`) |
 | Last commit | `4d6974c` Zoom time only; fit amplitude to the visible data |
-| Tests | 93 passing: `tdtgui/bin/python -m unittest discover tests` |
-| Next step | **Step 4: Spike Detection tab** (§4), after the user tests numbering + export |
+| Tests | 103 passing: `tdtgui/bin/python -m unittest discover tests` |
+| Next step | **Step 4b** (Detect Spikes + Raster): the user wants to discuss changes after testing 4a |
 
 ### Done
 1. Analog input viewer and event detection (`78664d0`).
@@ -29,6 +29,10 @@ delete details that the code or git history already records.
    QSettings).
 7. (`8722e70`) Export dialog: typed channel selection (`ui/channel_spec.py`, in the active numbering, written ascending) with All
    Channels / Displayed buttons and a live preview, plus a warning when the applied blanking is stale.
+8. Step 4a, Spike Detection tab:
+   - k·σ threshold (σ = median(|x|)/0.6745 in view, blanked samples excluded), polarity, refractory.
+   - A draggable threshold line (Single mode) and markers on troughs in view.
+   - Hints for a missing HP/BP filter and short views.
 
 ### Branches
 - **`main`:** the TDT/Blackrock viewer with filters, FFT/PSD, probe map, export and `.ccf` info.
@@ -138,6 +142,15 @@ tests/                unittest; test_blackrock.py has write_nsx_23() to build sy
   - Ctrl/⌘+wheel scales y and turns y auto-fit off. On macOS, ⌘ is `ControlModifier` and Ctrl is `MetaModifier`.
   - A double-click (pyqtgraph sends it to `mouseClickEvent` with `ev.double()`) turns y auto-fit back on.
   - Previously the wheel zoomed y too, which permanently switched y auto-range off.
+- **Spikes (4a):**
+  - `dsp/spikes.py` (`robust_sigma`, `detect_crossings` with blank exclusion and a cross-chunk refractory `last`,
+    `align_to_peak`).
+  - `SpikeSettings` lives per stream in `StreamState` and is saved in the session.
+  - `MainWindow._update_spike_overlay` runs in `_rerender_from_buffer` on the full-resolution visible slice, only while
+    the Spike tab is current or "show everywhere" is on.
+  - Threshold lines are `ignoreBounds` InfiniteLines, so they don't affect y auto-fit.
+  - Line drags set k = |y|/σ, coalesced by a 30 ms timer. On RP01 Elec 10 (BP 250–5000, 10 s view): σ 7.7 µV, 19
+    crossings, 22 ms per re-render.
 - **Plotting:**
   - Only a buffer of about 3× the view is read from disk, and it is min/max-decimated to ≤ 8000 points.
   - The analog plot keeps its own buffer and `WorkerManager`. It is x-linked to the main plot when Sync is on.
@@ -158,7 +171,7 @@ tests/                unittest; test_blackrock.py has write_nsx_23() to build sy
 
 ## 4. Roadmap
 
-### Step 4: Spike Detection tab (NEXT, agreed with the user)
+### Step 4: Spike Detection tab (4a DONE; 4b NEXT, to be re-discussed with the user)
 - **Threshold:**
   - −k·σ with σ = median(|x|)/0.6745 on the filtered, blanked data **in the current view**, blanked samples excluded.
   - k defaults to 4.75 and can be edited. Polarity is negative, positive or both; the refractory period is 2 ms.

@@ -328,6 +328,7 @@ class AppState:
                 ]
                 current.psd_nperseg = saved.psd_nperseg
                 current.psd_overlap = saved.psd_overlap
+                current.spike_settings = saved.spike_settings
 
         # Restore analog assignments and detected events
         self.custom_modalities = list(session.get("custom_modalities", []))
