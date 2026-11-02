@@ -11,7 +11,7 @@ delete details that the code or git history already records.
 | | |
 |---|---|
 | Active branch | `NSP_Basic` (not pushed; branched from `main` @ `beb2da4`) |
-| Last commit | `75b6684` Spike tab: keep only the threshold line; rename to k x sigma |
+| Last commit | `96b62ac` Detect spikes across the whole recording and show them as a raster |
 | Tests | 109 passing: `tdtgui/bin/python -m unittest discover tests` |
 | Next step | User tests 4b; then waveform snippets or the later list (§4) |
 
@@ -34,7 +34,7 @@ delete details that the code or git history already records.
    - A draggable threshold line (Single mode). The user then asked to remove the trace markers and the info line, and
      the label was renamed "Threshold (k × σ)": σ is not Vrms.
    - Hints for a missing HP/BP filter and short views.
-9. Step 4b:
+9. (`96b62ac`) Step 4b:
    - Detect Spikes runs over the whole recording, with σ frozen from the view.
    - It uses the shared chunk pipeline `core.export.iter_processed_chunks`, and the results feed the Raster tab.
    - Channel filtering is parallelised.
