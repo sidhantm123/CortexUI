@@ -35,6 +35,7 @@ from core.workers import (
     EventDetectWorker,
     BlankingWorker,
     ExportWorker,
+    SpikeDetectWorker,
 )
 from models import StreamState, ChannelMode, NUMBER_BY_ELECTRODE, NUMBER_BY_CHANNEL
 from dsp import apply_filter_chain, decimate_for_display
@@ -54,6 +55,8 @@ from .analog_plot import AnalogPlot
 from .analog_panel import AnalogPanel
 from .blanking_panel import BlankingPanel
 from .spike_panel import SpikePanel
+from .raster_plot import RasterPlot
+from .plot_widget import format_volts
 
 
 def _placeholder_tab(text: str) -> QWidget:
@@ -125,6 +128,7 @@ class MainWindow(QMainWindow):
         self._detect_worker: Optional[EventDetectWorker] = None
         self._blank_worker: Optional[BlankingWorker] = None
         self._export_worker: Optional[ExportWorker] = None
+        self._spike_worker: Optional[SpikeDetectWorker] = None
 
         self._setup_ui()
         self._setup_menu()
@@ -162,6 +166,11 @@ class MainWindow(QMainWindow):
         # Time series tab
         self._time_plot = TimeSeriesPlot()
         self._plot_tabs.addTab(self._time_plot, "Time Series")
+
+        # Raster tab (enabled once spikes are detected)
+        self._raster_plot = RasterPlot()
+        self._raster_tab_index = self._plot_tabs.addTab(self._raster_plot, "Raster")
+        self._plot_tabs.setTabEnabled(self._raster_tab_index, False)
 
         # Spectrum tab
         self._spectrum_plot = SpectrumPlot()
@@ -335,6 +344,7 @@ class MainWindow(QMainWindow):
             return
         self._control_panel.set_state(state)
         self._spectrum_panel.set_state(state)
+        self._update_spike_view()
         self._last_plot_channels = []  # rebuild legends / Vrms labels
         view_start, view_end = state.get_view_range()
         self._rerender_from_buffer(view_start, view_end, state)
@@ -405,6 +415,10 @@ class MainWindow(QMainWindow):
         self._spike_panel.settings_changed.connect(self._spike_timer.start)
         self._control_tabs.currentChanged.connect(lambda _i: self._rerender_current())
         self._time_plot.threshold_dragged.connect(self._on_threshold_dragged)
+        self._spike_panel.detect_requested.connect(self._on_detect_spikes)
+        self._spike_panel.threshold_settings_changed.connect(self._on_spike_inputs_changed)
+        self._raster_plot.plot_item().setXLink(self._time_plot.plot_item())
+        self._raster_plot.channel_clicked.connect(self._on_raster_channel_clicked)
         self._sigma_selected: Optional[float] = None  # σ of the selected channel in view
 
         # Blanking
@@ -487,6 +501,7 @@ class MainWindow(QMainWindow):
             self._spike_panel.set_state(state)
             self._analog_panel.refresh()
             self._update_numbering_actions()
+            self._update_spike_view()
 
             # Load and display data
             self._refresh_plot()
@@ -552,6 +567,7 @@ class MainWindow(QMainWindow):
     @Slot()
     def _on_filters_changed(self):
         """Handle filter chain change."""
+        self._on_spike_inputs_changed()
         state = self._app_state.get_current_state()
         needs_all = (
             state is not None
@@ -644,7 +660,7 @@ class MainWindow(QMainWindow):
             )
 
             # Switch to spectrum tab
-            self._plot_tabs.setCurrentIndex(1)
+            self._plot_tabs.setCurrentWidget(self._spectrum_plot)
 
         except Exception as e:
             QMessageBox.warning(
@@ -865,6 +881,7 @@ class MainWindow(QMainWindow):
         self._analog_panel.set_summary("")
         self._blanking_panel.refresh()
         self._update_blanking_indicator()
+        self._update_spike_view()
         self._analog_plot.highlight_event(None)
         self._update_analog_events()
         state = self._app_state.get_current_state()
@@ -877,6 +894,7 @@ class MainWindow(QMainWindow):
         self._analog_plot.set_events(
             self._app_state.events, self._app_state.modality_names()
         )
+        self._raster_plot.set_events(self._app_state.events, self._app_state.modality_names())
         self._update_analog_title()
 
     def _current_analog_key(self):
@@ -925,6 +943,7 @@ class MainWindow(QMainWindow):
             self._buffer_channels = []
             self._refresh_plot()
         self._app_state.mark_blanking_stale()  # electrode set changed
+        self._on_spike_inputs_changed()
         self._blanking_panel.update_status()
         self._update_analog_events()
         self._refresh_analog()
@@ -1071,6 +1090,116 @@ class MainWindow(QMainWindow):
             hints.append(f"View is {view_s:.2f} s — σ from under 5 s of data is noisy.")
         self._spike_panel.set_hints(hints)
 
+    # ------------------------------------------------------------------ spike detection
+
+    def _on_spike_inputs_changed(self):
+        """Blanking, filters or threshold settings changed: detected spikes are out of date."""
+        state = self._app_state.get_current_state()
+        res = self._app_state.spike_results.get(state.stream_name) if state else None
+        if res is not None and not res.stale:  # cheap when already stale (e.g. while dragging the line)
+            self._app_state.mark_spikes_stale(state.stream_name)
+            self._update_spike_view()
+
+    def _update_spike_view(self):
+        """Show the current stream's detection result in the panel and the Raster tab."""
+        state = self._app_state.get_current_state()
+        res = self._app_state.spike_results.get(state.stream_name) if state else None
+        self._plot_tabs.setTabEnabled(self._raster_tab_index, res is not None)
+        if res is None:
+            self._spike_panel.set_summary("")
+            self._raster_plot.clear()
+            if self._plot_tabs.currentIndex() == self._raster_tab_index:
+                self._plot_tabs.setCurrentWidget(self._time_plot)
+            return
+
+        rows = [c for c in state.ordered_neural_channels() if c in res.times]
+        rates = [res.rate(c) for c in rows]
+        sign = {NEGATIVE: "−", POSITIVE: "+", BOTH: "±"}.get(res.polarity, "")
+        summary = (
+            f"Detected {res.total():,} spikes on {len(rows)} electrodes · "
+            f"σ from {res.sigma_window[0]:.1f}–{res.sigma_window[1]:.1f} s · "
+            f"k = {res.k:g} · median rate {np.median(rates) if rates else 0:.2f} Hz"
+        )
+        tooltip = "\n".join(
+            f"{state.channel_label(c)}: σ = {format_volts(res.sigma[c])}, threshold "
+            f"{sign}{format_volts(res.k * res.sigma[c])}, {len(res.times[c])} spikes"
+            for c in rows
+        )
+        self._spike_panel.set_summary(summary, tooltip, res.stale)
+
+        def describe(c):
+            return f"{state.channel_label(c)}: {len(res.times[c]):,} spikes · {res.rate(c):.2f} Hz"
+
+        self._raster_plot.set_spikes(
+            rows, res.times, {c: state.display_number(c) for c in rows}, describe, res.stale
+        )
+
+    @Slot()
+    def _on_detect_spikes(self):
+        state = self._app_state.get_current_state()
+        if state is None or self._app_state.block is None:
+            return
+        t0, t1 = state.get_view_range()
+        if t1 - t0 < 5.0:
+            answer = QMessageBox.question(
+                self, "Short View",
+                f"σ will be frozen from the current view, which is only {t1 - t0:.2f} s long, so the "
+                "thresholds may be noisy. Detect anyway?",
+            )
+            if answer != QMessageBox.StandardButton.Yes:
+                return
+
+        blank_results = self._app_state.active_blanking(state.stream_name)
+        active_filters = [] if state.global_bypass else [f for f in state.filters if not f.bypassed]
+        processing = "; ".join(filter(None, [
+            ("Blanking: " + ", ".join(r.modality for r in blank_results)) if blank_results else "",
+            ("Filters: " + ", ".join(f.get_display_name() for f in active_filters)) if active_filters else "",
+        ])) or "raw (no blanking, no filters)"
+
+        progress = QProgressDialog("Detecting spikes across the recording...", "Cancel", 0, 100, self)
+        progress.setWindowModality(Qt.WindowModality.WindowModal)
+        progress.setMinimumDuration(0)
+
+        worker = SpikeDetectWorker(
+            self._app_state.reader, state.stream_name, state.ordered_neural_channels(),
+            state.sample_rate, state.num_channels, int(round(state.duration * state.sample_rate)),
+            (t0, t1), copy.deepcopy(state.spike_settings), blank_results,
+            copy.deepcopy(active_filters), processing,
+        )
+        worker.signals.progress.connect(progress.setValue)
+        progress.canceled.connect(worker.cancel)
+
+        def done(result):
+            progress.close()
+            self._app_state.spike_results[state.stream_name] = result
+            self._update_spike_view()
+            self._plot_tabs.setCurrentIndex(self._raster_tab_index)
+            self._status_label.setText(f"Detected {result.total():,} spikes")
+
+        def failed(err):
+            progress.close()
+            QMessageBox.warning(self, "Spike Detection Error", f"Failed to detect spikes:\n\n{err}")
+
+        worker.signals.result.connect(done)
+        worker.signals.error.connect(failed)
+        worker.signals.cancelled.connect(progress.close)
+        # Not submitted to _worker_manager: plot refreshes call cancel_all() on it
+        self._spike_worker = worker
+        self._worker_manager.thread_pool.start(worker)
+        progress.show()
+
+    @Slot(int)
+    def _on_raster_channel_clicked(self, channel: int):
+        """Open the clicked electrode in Time Series."""
+        state = self._app_state.get_current_state()
+        if state is None:
+            return
+        state.channel_mode = ChannelMode.SINGLE
+        state.selected_channel = channel
+        self._control_panel.set_state(state)
+        self._plot_tabs.setCurrentWidget(self._time_plot)
+        self._refresh_plot()
+
     @Slot(float)
     def _on_threshold_dragged(self, level: float):
         """The threshold line was dragged: k = |y| / σ of the selected channel."""
@@ -1113,6 +1242,7 @@ class MainWindow(QMainWindow):
         """Blanking was applied or removed: re-process the loaded buffer."""
         self._blanking_panel.update_status()
         self._update_blanking_indicator()
+        self._on_spike_inputs_changed()
         self._apply_filters()
 
     @Slot(str)
@@ -1233,6 +1363,7 @@ class MainWindow(QMainWindow):
             progress.close()
             self._app_state.events = result["events"]
             self._app_state.blanking_results.clear()  # trial times changed
+            self._on_spike_inputs_changed()
             self._analog_panel.set_edit_message("")
             self._blanking_panel.refresh()
             self._apply_filters()
@@ -1604,7 +1735,7 @@ class MainWindow(QMainWindow):
         # Cancel any running workers
         self._worker_manager.cancel_all()
         self._analog_workers.cancel_all()
-        for worker in (self._detect_worker, self._blank_worker, self._export_worker):
+        for worker in (self._detect_worker, self._blank_worker, self._export_worker, self._spike_worker):
             if worker is not None:
                 worker.cancel()
         self._worker_manager.wait_all(3000)

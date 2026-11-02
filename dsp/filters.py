@@ -1,4 +1,6 @@
 """Filter design and application using SOS format."""
+import os
+from concurrent.futures import ThreadPoolExecutor
 from typing import Dict, List, Optional, Tuple
 import numpy as np
 from scipy import signal
@@ -6,6 +8,9 @@ from scipy import signal
 from models.filter_config import FilterConfig, FilterType
 from .referencing import apply_car, apply_cmr
 from .metrics import compute_vrms
+
+
+_FILTER_THREADS = min(8, os.cpu_count() or 1)
 
 
 def design_filter(config: FilterConfig, fs: float) -> Optional[np.ndarray]:
@@ -84,12 +89,20 @@ def apply_filter(data: np.ndarray, sos: np.ndarray) -> np.ndarray:
     """
     if data.ndim == 1:
         return signal.sosfiltfilt(sos, data)
-    else:
-        # Apply to each channel
-        result = np.zeros_like(data)
-        for i in range(data.shape[0]):
-            result[i] = signal.sosfiltfilt(sos, data[i])
-        return result
+    # scipy's filtering releases the GIL, so blocks of channels run in parallel threads;
+    # results are identical to filtering each channel on its own.
+    n_threads = min(_FILTER_THREADS, data.shape[0])
+    if n_threads <= 1 or data.size < 200_000:
+        return signal.sosfiltfilt(sos, data, axis=-1)
+    result = np.empty(data.shape, dtype=np.result_type(data.dtype, np.float64))
+
+    def run(rows: slice):
+        result[rows] = signal.sosfiltfilt(sos, data[rows], axis=-1)  # slices are views, not copies
+
+    edges = np.linspace(0, data.shape[0], n_threads + 1).astype(int)
+    with ThreadPoolExecutor(n_threads) as pool:
+        list(pool.map(run, [slice(a, b) for a, b in zip(edges[:-1], edges[1:])]))
+    return result
 
 
 def apply_filter_chain(

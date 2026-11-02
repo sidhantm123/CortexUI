@@ -6,6 +6,7 @@ A desktop app (Windows / macOS) for viewing and analyzing multi-channel neural r
 
 - Single-channel or overlay (up to 8 channels) time-series plots, smooth on recordings of 2+ hours
 - Filter chains: low-pass, high-pass, band-pass, notch, CAR and CMR, applied in any order
+- Spike detection (k × σ threshold, draggable on the plot) over the whole recording, shown as a raster
 - Live per-channel Vrms of the visible data (blanked samples excluded), shown in the plot corner
 - Analog input viewer (below the main plot) with stimulation event detection: assign analog lines to modalities (ICMS, PNS, Tactor or your own), detect events, browse them in a table and correct onset/offset times
 - Stimulation artifact blanking per modality, with fixed or adaptive (per-channel recovery) padding, applied before filtering
@@ -64,7 +65,9 @@ pyinstaller --clean tdt_viewer.spec
    - **Basic** blanks every electrode from onset − pre-pad to offset + post-pad and fills the gap linearly.
    - **Advanced** blanks from onset − pre-pad until, per channel, *N* consecutive windows have spike-band (250–5000 Hz) RMS below *k* × that channel's baseline (measured on clean stretches ≥ 3 s from any event), within the min/max post-pad. Choose trials and linear or cubic interpolation.
    - **Apply Blanking** / **Remove Blanking**. Blanking runs before the filter chain in the plot, Analysis and Export; blanked spans are shaded grey.
-8. **Spike Detection tab**: threshold = *k* × σ (default 4.75), with σ = median(|x|)/0.6745 of the filtered, blanked data in view (blanked samples excluded). Choose polarity (negative, positive, both) and a refractory period (2 ms). While the tab is open, the Time Series plot shows the threshold as a red dashed line (Single Channel mode; drag it to change *k*). σ is a spike-robust noise estimate, not the Vrms shown in the plot corner. Add a high-pass or band-pass first (e.g. 250–5000 Hz); the tab warns if there is none. Whole-recording detection is coming next.
+8. **Spike Detection tab**: threshold = *k* × σ (default 4.75), with σ = median(|x|)/0.6745 of the filtered, blanked data in view (blanked samples excluded). Choose polarity (negative, positive, both) and a refractory period (2 ms). While the tab is open, the Time Series plot shows the threshold as a red dashed line (Single Channel mode; drag it to change *k*). σ is a spike-robust noise estimate, not the Vrms shown in the plot corner. Add a high-pass or band-pass first (e.g. 250–5000 Hz); the tab warns if there is none.
+   - **Detect Spikes (whole recording)** freezes each electrode's σ from the current view (pick a representative view of at least ~5 s), then runs through the whole recording with the current blanking and filters (a spike = the first sample past the threshold; crossings on blanked samples are ignored; refractory period applied). About 4 minutes for a 16-minute, 128-channel recording.
+   - Results appear in the **Raster** tab (one row per electrode, a tick per spike, stimulus events shaded, time axis linked with the other plots). Click a row to open that electrode; hover for its spike count and rate. Results are saved with the session and marked out of date if blanking, filters or threshold settings change.
 9. **Analysis tab**: pick FFT or PSD, choose an interval (type it in or drag on the plot), then click **Analyze**. Results appear in the Spectrum tab.
 10. **File → Export → Stream as Binary**: pick the range (current view or full recording), then type the channels in the current numbering (e.g. `1-24, 37-45`, `1,2,3` or `33`; **All Channels** / **Displayed** fill the box; a preview lists what you selected and errors show in red). Channels are written in ascending order. Set the scale (default ×1e6, i.e. µV per count), layout and extension. Export writes the data as it currently is: every applied blanking, then the active filter chain. **Processing** lets you pick an earlier stage: untick **Apply blanking** and/or **Apply filter chain** (both for raw). If an applied blanking is out of date (events or settings changed since Apply), the dialog warns you. Full recordings are exported in chunks, so memory stays around 1.5 GB even for 8 GB files. A `.txt` summary next to the file records the range, channels, scale, clipped samples and exactly which blanking and filters were applied.
 11. **File → Save/Load Session** stores settings as JSON. The recording must still exist at its original path to reload a session.
@@ -73,7 +76,7 @@ pyinstaller --clean tdt_viewer.spec
 
 ```
 main.py              Entry point
-core/                AppState, background workers, reader_factory (picks TDT or Blackrock)
+core/                AppState, background workers, reader_factory, chunked processing (export, spike detection)
 tdt_io/              TDT reader
 blackrock_io/        Blackrock .nsX reader and .ccf parser
 models/              Data classes: recording metadata, per-stream state, filters, probe, analog assignments/events
@@ -84,7 +87,7 @@ tests/               Unit tests
 
 Every reader exposes `load_block()` and `get_stream_data(stream, channels, start, end)`, which returns `(channels × samples)` data in volts. Only the visible time window is read from disk, and plots are min/max decimated for display.
 
-Whole-recording spike detection and a raster view are in progress (see `CLAUDE.md`).
+See `CLAUDE.md` for what's in progress.
 
 ## Troubleshooting
 

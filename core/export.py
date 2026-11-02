@@ -59,6 +59,75 @@ def chunk_bounds(i_start: int, i_stop: int, chunk_n: int,
     return bounds
 
 
+def iter_processed_chunks(
+    reader,
+    stream: str,
+    channels: List[int],
+    i_start: int,
+    i_stop: int,
+    fs: float,
+    num_channels: int,
+    blank_results=(),
+    filters=None,
+    chunk_s: float = 5.0,
+    pad_s: float = 1.0,
+    left_overlap: int = 0,
+    with_mask: bool = False,
+):
+    """
+    Yield [i_start, i_stop) of the given channels in processed chunks, the same way
+    everywhere (export, spike detection):
+
+        blanking (if blank_results) -> filter chain (if filters, CAR/CMR loads all channels)
+
+    Each chunk is read with pad_s of extra data on each side (trimmed) so zero-phase filters
+    have no edge effects at joins, and chunk boundaries never split a blank span.
+
+    Yields (k, n_chunks, a, b, data, mask):
+        data: (len(channels), lo + b - a) float array, where lo = min(left_overlap, a - i_start)
+              extra samples before a are included (e.g. so a crossing at a can be detected).
+        mask: same shape, True where samples are blanked (None unless with_mask).
+    """
+    from dsp.blanking import blank_mask
+
+    blank_results = list(blank_results or [])
+    filters = [f for f in (filters or []) if not f.bypassed]
+    needs_all = any(f.filter_type in (FilterType.CAR, FilterType.CMR) for f in filters)
+    load_channels = list(range(num_channels)) if needs_all else list(channels)
+    rows = [load_channels.index(c) for c in channels]
+    pad_n = max(int(round(pad_s * fs)) if filters else 0, left_overlap)
+    bounds = chunk_bounds(
+        i_start, i_stop, max(1, int(round(chunk_s * fs))), blank_sample_spans(blank_results, fs)
+    )
+
+    for k, (a, b) in enumerate(bounds):
+        r0, r1 = max(0, a - pad_n), b + pad_n
+        data, time_axis = reader.get_stream_data(
+            stream, channels=load_channels, start_time=_t(r0, fs), end_time=_t(r1, fs)
+        )
+        data = np.atleast_2d(data)
+        if blank_results:
+            data = apply_blanking(data, time_axis, load_channels, blank_results)
+        if filters:
+            out, _, _ = apply_filter_chain(
+                data[rows], filters, fs,
+                all_channel_data=data if needs_all else None,
+                channel_indices=channels,
+            )
+        else:
+            out = data[rows]
+
+        lo = min(left_overlap, a - i_start)
+        s0, s1 = a - r0 - lo, a - r0 + (b - a)
+        mask = None
+        if with_mask:
+            mask = (
+                blank_mask(time_axis, channels, blank_results)[:, s0:s1]
+                if blank_results else np.zeros((len(channels), s1 - s0), dtype=bool)
+            )
+        yield k, len(bounds), a, b, np.atleast_2d(out)[:, s0:s1], mask
+
+
 def export_binary(
     reader,
     stream: str,
@@ -80,26 +149,15 @@ def export_binary(
     """
     Write samples [i_start, i_stop) of the given channels as int16.
 
-    Processing per chunk: blanking (if blank_results) -> filter chain (if filters)
-    -> x scale -> clip -> int16. Each chunk is read with pad_s of extra data on each side
-    (trimmed before writing) so zero-phase filters have no edge effects at chunk joins.
+    Processing per chunk (see iter_processed_chunks): blanking -> filter chain -> x scale
+    -> clip -> int16.
 
     Returns:
         {"n_samples": samples per channel written, "n_clipped": samples clipped to int16,
          "cancelled": bool}
     """
-    blank_results = list(blank_results or [])
-    filters = [f for f in (filters or []) if not f.bypassed]
-    needs_all = any(f.filter_type in (FilterType.CAR, FilterType.CMR) for f in filters)
-    load_channels = list(range(num_channels)) if needs_all else list(channels)
-    rows = [load_channels.index(c) for c in channels]
-
     n_total = i_stop - i_start
     n_ch = len(channels)
-    pad_n = int(round(pad_s * fs)) if filters else 0
-    bounds = chunk_bounds(
-        i_start, i_stop, max(1, int(round(chunk_s * fs))), blank_sample_spans(blank_results, fs)
-    )
 
     sequential = None
     interlaced = None
@@ -110,27 +168,14 @@ def export_binary(
 
     n_clipped = 0
     try:
-        for k, (a, b) in enumerate(bounds):
+        for k, n_chunks, a, b, out, _ in iter_processed_chunks(
+            reader, stream, channels, i_start, i_stop, fs, num_channels,
+            blank_results, filters, chunk_s, pad_s,
+        ):
             if cancelled is not None and cancelled():
                 return {"n_samples": a - i_start, "n_clipped": n_clipped, "cancelled": True}
 
-            r0, r1 = max(0, a - pad_n), b + pad_n
-            data, time_axis = reader.get_stream_data(
-                stream, channels=load_channels, start_time=_t(r0, fs), end_time=_t(r1, fs)
-            )
-            data = np.atleast_2d(data)
-            if blank_results:
-                data = apply_blanking(data, time_axis, load_channels, blank_results)
-            if filters:
-                out, _, _ = apply_filter_chain(
-                    data[rows], filters, fs,
-                    all_channel_data=data if needs_all else None,
-                    channel_indices=channels,
-                )
-            else:
-                out = data[rows]
-
-            out = np.atleast_2d(out)[:, a - r0: a - r0 + (b - a)] * scale
+            out = out * scale
             n_clipped += int(np.count_nonzero((out < INT16_MIN) | (out > INT16_MAX)))
             chunk = np.clip(np.rint(out), INT16_MIN, INT16_MAX).astype(np.int16)
 
@@ -140,7 +185,7 @@ def export_binary(
                 sequential[:, a - i_start: a - i_start + chunk.shape[1]] = chunk
 
             if progress is not None:
-                progress(int(100 * (k + 1) / len(bounds)))
+                progress(int(100 * (k + 1) / n_chunks))
     finally:
         if interlaced is not None:
             interlaced.close()

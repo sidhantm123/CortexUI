@@ -8,6 +8,7 @@ from models import StreamState
 from models.analog import AnalogAssignment, StimEvent, MODALITY_PRESETS, number_events
 from models.blanking import BlankingSettings, BlankResult
 from models.filter_config import REMOVED_FILTER_TYPES
+from models.spikes import SpikeResult
 from models.probe import ProbeGeometry
 from models.recording import RecordingBlock
 from tdt_io import TDTReader
@@ -51,6 +52,9 @@ class AppState:
     # Artifact blanking per modality: settings, and the intervals from "Apply Blanking"
     blanking_settings: Dict[str, BlankingSettings] = field(default_factory=dict)
     blanking_results: Dict[str, BlankResult] = field(default_factory=dict)
+
+    # Whole-recording spike detection per stream
+    spike_results: Dict[str, SpikeResult] = field(default_factory=dict)
 
     # Callbacks for state changes
     _on_block_loaded: List[Callable] = field(default_factory=list)
@@ -152,6 +156,7 @@ class AppState:
         self.analog_assignments.clear()
         self.events = []
         self.blanking_results.clear()
+        self.spike_results.clear()
 
     def modality_names(self) -> List[str]:
         """Preset modalities followed by the user's own."""
@@ -217,6 +222,12 @@ class AppState:
             if modality is None or name == modality:
                 res.stale = True
 
+    def mark_spikes_stale(self, stream: Optional[str] = None):
+        """Blanking, filters or threshold settings changed after spikes were detected."""
+        for name, res in self.spike_results.items():
+            if stream is None or name == stream:
+                res.stale = True
+
     def active_blanking(self, stream: str) -> List[BlankResult]:
         """Applied blanking results for a stream."""
         return [r for r in self.blanking_results.values() if r.stream == stream]
@@ -259,6 +270,7 @@ class AppState:
             "events": [e.to_dict() for e in self.events],
             "blanking_settings": {m: b.to_dict() for m, b in self.blanking_settings.items()},
             "blanking_results": [r.to_dict() for r in self.blanking_results.values()],
+            "spike_results": [r.to_dict() for r in self.spike_results.values()],
         }
 
         with open(filepath, "w") as f:
@@ -351,6 +363,11 @@ class AppState:
             res = BlankResult.from_dict(r_dict)
             if res.stream in self.stream_states:
                 self.blanking_results[res.modality] = res
+
+        for r_dict in session.get("spike_results", []):
+            res = SpikeResult.from_dict(r_dict)
+            if res.stream in self.stream_states:
+                self.spike_results[res.stream] = res
 
         # Restore probe geometry (optional — missing key or None is fine)
         probe_dict = session.get("probe")

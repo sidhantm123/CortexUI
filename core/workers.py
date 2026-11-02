@@ -574,6 +574,74 @@ class ExportWorker(CancellableWorker):
             self.signals.error.emit(str(e))
 
 
+class SpikeDetectWorker(CancellableWorker):
+    """
+    Freeze sigma per channel from one window, then detect threshold crossings over the
+    whole recording (see core.spike_detect).
+
+    Emits result: SpikeResult.
+    """
+
+    def __init__(self, reader, stream: str, channels, fs: float, num_channels: int,
+                 n_samples: int, sigma_window, settings, blank_results=(), filters=None,
+                 processing: str = ""):
+        super().__init__()
+        self.reader = reader
+        self.stream = stream
+        self.channels = list(channels)
+        self.fs = fs
+        self.num_channels = num_channels
+        self.n_samples = n_samples
+        self.sigma_window = sigma_window
+        self.settings = settings
+        self.blank_results = list(blank_results)
+        self.filters = filters
+        self.processing = processing
+
+    @Slot()
+    def run(self):
+        from core.spike_detect import freeze_sigma, detect_spikes
+        from models.spikes import SpikeResult
+
+        self.signals.started.emit()
+        try:
+            fs = self.fs
+            t0, t1 = self.sigma_window
+            i0 = max(0, int(round(t0 * fs)))
+            i1 = min(self.n_samples, max(i0 + 1, int(round(t1 * fs))))
+            sigma = freeze_sigma(
+                self.reader, self.stream, self.channels, i0, i1, fs, self.num_channels,
+                self.blank_results, self.filters,
+            )
+            self.signals.progress.emit(3)
+            times = detect_spikes(
+                self.reader, self.stream, self.channels, 0, self.n_samples, fs, self.num_channels,
+                self.settings.k * sigma, self.settings.polarity, self.settings.refractory_ms,
+                self.blank_results, self.filters,
+                progress=lambda p: self.signals.progress.emit(3 + int(0.97 * p)),
+                cancelled=self.is_cancelled,
+            )
+            if times is None:
+                self.signals.cancelled.emit()
+                return
+            self.signals.result.emit(SpikeResult(
+                stream=self.stream,
+                fs=fs,
+                channels=self.channels,
+                times=times,
+                sigma={c: float(s) for c, s in zip(self.channels, sigma)},
+                k=self.settings.k,
+                polarity=self.settings.polarity,
+                refractory_ms=self.settings.refractory_ms,
+                sigma_window=(i0 / fs, i1 / fs),
+                processing=self.processing,
+                duration=self.n_samples / fs,
+            ))
+            self.signals.finished.emit()
+        except Exception as e:
+            self.signals.error.emit(str(e))
+
+
 class WorkerManager:
     """Manages worker threads and provides cancellation."""
 

@@ -12,8 +12,8 @@ delete details that the code or git history already records.
 |---|---|
 | Active branch | `NSP_Basic` (not pushed; branched from `main` @ `beb2da4`) |
 | Last commit | `75b6684` Spike tab: keep only the threshold line; rename to k x sigma |
-| Tests | 103 passing: `tdtgui/bin/python -m unittest discover tests` |
-| Next step | **Step 4b** (Detect Spikes + Raster): the user wants to discuss changes after testing 4a |
+| Tests | 109 passing: `tdtgui/bin/python -m unittest discover tests` |
+| Next step | User tests 4b; then waveform snippets or the later list (§4) |
 
 ### Done
 1. Analog input viewer and event detection (`78664d0`).
@@ -34,6 +34,10 @@ delete details that the code or git history already records.
    - A draggable threshold line (Single mode). The user then asked to remove the trace markers and the info line, and
      the label was renamed "Threshold (k × σ)": σ is not Vrms.
    - Hints for a missing HP/BP filter and short views.
+9. Step 4b:
+   - Detect Spikes runs over the whole recording, with σ frozen from the view.
+   - It uses the shared chunk pipeline `core.export.iter_processed_chunks`, and the results feed the Raster tab.
+   - Channel filtering is parallelised.
 
 ### Branches
 - **`main`:** the TDT/Blackrock viewer with filters, FFT/PSD, probe map, export and `.ccf` info.
@@ -157,6 +161,21 @@ tests/                unittest; test_blackrock.py has write_nsx_23() to build sy
   - Threshold lines are `ignoreBounds` InfiniteLines, so they don't affect y auto-fit.
   - Line drags set k = |y|/σ, coalesced by a 30 ms timer. On RP01 Elec 10 (BP 250–5000, 10 s view): σ 7.7 µV, 19
     crossings.
+- **Spikes (4b):**
+  - `core/spike_detect.py`:
+    - `freeze_sigma` processes the view range as one chunk.
+    - `detect_spikes` uses `iter_processed_chunks(left_overlap=1, with_mask=True)`. The 1-sample overlap lets a
+      crossing exactly at a chunk start be seen, and the refractory `last` is carried across chunks.
+  - `SpikeResult` lives in `AppState.spike_results[stream]` and is saved in the session as sample indices (RP01: 435k
+    spikes ≈ 8 MB).
+  - It goes stale on blanking apply/remove, filter changes, analog-list edits, re-detected events, and k/polarity/
+    refractory changes.
+  - `ui/raster_plot.py` draws one `PlotCurveItem(connect="pairs")` of the ticks within the view, x-linked to Time Series.
+  - **Performance:**
+    - `dsp.filters.apply_filter` filters blocks of channels in threads (scipy releases the GIL; results are identical).
+    - RP01 full detection with BP 250–5000: 472 s → 226 s, peak ~2.9 GB.
+  - **RP01 finding:** with Basic ICMS blanking (post 500 ms), the raster shows a dense block on all electrodes for about
+    1–3 s after each blank. That is the post-ICMS discharge, not spikes. Advanced blanking is the fix.
 - **Plotting:**
   - Only a buffer of about 3× the view is read from disk, and it is min/max-decimated to ≤ 8000 points.
   - The analog plot keeps its own buffer and `WorkerManager`. It is x-linked to the main plot when Sync is on.
@@ -177,7 +196,7 @@ tests/                unittest; test_blackrock.py has write_nsx_23() to build sy
 
 ## 4. Roadmap
 
-### Step 4: Spike Detection tab (4a DONE; 4b NEXT, to be re-discussed with the user)
+### Step 4: Spike Detection tab (DONE: 4a + 4b; design notes below kept for reference)
 - **Threshold:**
   - −k·σ with σ = median(|x|)/0.6745 on the filtered, blanked data **in the current view**, blanked samples excluded.
   - k defaults to 4.75 and can be edited. Polarity is negative, positive or both; the refractory period is 2 ms.

@@ -22,6 +22,8 @@ class SpikePanel(QWidget):
     """Threshold settings; the threshold line is drawn on the Time Series plot."""
 
     settings_changed = Signal()
+    threshold_settings_changed = Signal()  # k / polarity / refractory (affects detected spikes)
+    detect_requested = Signal()
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -77,9 +79,17 @@ class SpikePanel(QWidget):
         layout.addWidget(self._hint_label)
 
         self._detect_btn = QPushButton("Detect Spikes (whole recording)")
-        self._detect_btn.setEnabled(False)
-        self._detect_btn.setToolTip("Coming in the next step")
+        self._detect_btn.setToolTip(
+            "Freezes each electrode's σ from the current view, then finds threshold crossings "
+            "across the whole recording (with the current blanking and filters)."
+        )
+        self._detect_btn.clicked.connect(self.detect_requested.emit)
         layout.addWidget(self._detect_btn)
+
+        self._summary_label = QLabel("")
+        self._summary_label.setWordWrap(True)
+        self._summary_label.setStyleSheet("font-size: 11px;")
+        layout.addWidget(self._summary_label)
 
         layout.addStretch()
 
@@ -103,12 +113,25 @@ class SpikePanel(QWidget):
     def set_hints(self, hints: List[str]):
         self._hint_label.setText("\n".join(hints))
 
+    def set_summary(self, text: str, tooltip: str = "", stale: bool = False):
+        """Result of the last whole-recording detection ('' = none)."""
+        if stale and text:
+            text += "\nOut of date (blanking, filters or threshold changed) — Detect again."
+        self._summary_label.setText(text)
+        self._summary_label.setToolTip(tooltip)
+        self._summary_label.setStyleSheet(
+            f"font-size: 11px; color: {'#c0392b' if stale else '#1e7d32'};"
+        )
+
     def _on_changed(self, *_):
         if self._loading or self._state is None:
             return
         s = self._state.spike_settings
+        before = (s.k, s.polarity, s.refractory_ms)
         s.k = self._k_spin.value()
         s.polarity = self._polarity_combo.currentData()
         s.refractory_ms = self._refractory_spin.value()
         s.show_everywhere = self._everywhere_check.isChecked()
         self.settings_changed.emit()
+        if (s.k, s.polarity, s.refractory_ms) != before:
+            self.threshold_settings_changed.emit()
