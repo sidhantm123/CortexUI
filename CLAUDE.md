@@ -151,9 +151,9 @@ tests/                unittest; test_blackrock.py has write_nsx_23() to build sy
     the Spike tab is current or "show everywhere" is on.
   - It computes σ for the selected channel only and places the line. **No markers or info line**: the user removed them.
     `detect_crossings`/`align_to_peak` remain for 4b.
-  - **σ vs whole recording (explained to the user):** same formula and pipeline. The panel σ follows the view. 4b as
-    planned freezes one σ per electrode from the view at click time, and the user may revisit this (e.g. σ from clean
-    stretches across the recording, or per chunk).
+  - **σ vs whole recording (explained to the user):** same formula and pipeline. The panel σ follows the view. In 4b,
+    **decided (2026-11-03): σ per electrode is frozen from the current view at click time** (not from clean stretches or
+    per chunk).
   - Threshold lines are `ignoreBounds` InfiniteLines, so they don't affect y auto-fit.
   - Line drags set k = |y|/σ, coalesced by a 30 ms timer. On RP01 Elec 10 (BP 250–5000, 10 s view): σ 7.7 µV, 19
     crossings.
