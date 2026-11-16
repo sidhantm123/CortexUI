@@ -190,7 +190,8 @@ tests/                unittest; test_blackrock.py has write_nsx_23() to build sy
     `cancel_all()` runs on every refresh. Keep its own reference so it can be cancelled on close.
 - Don't rebuild a widget from inside its own signal (table `itemChanged`, line `sigPositionChangeFinished`); defer with
   `QTimer.singleShot(0, ...)`.
-- Write commit messages in the imperative, ending with the Co-Authored-By line. Don't push unless the user asks.
+- Write commit messages in the imperative. **No Co-Authored-By or any other Claude attribution** (user rule,
+  2026-11-17). Don't push unless the user asks.
 
 ---
 
@@ -217,6 +218,8 @@ tests/                unittest; test_blackrock.py has write_nsx_23() to build sy
 - **Later step:** waveform snippets (overlaid ~2 ms cut-outs).
 
 ### Later / unscheduled
+- **Analysis tab: frequency range for FFT/PSD (user request, 2026-11-17):** let the user set a min/max frequency (Hz)
+  before Analyze; the Spectrum plot then shows only that band. The time-interval selection already exists.
 - **CAR/CMR grouping by array (user request, 2026-10-27):**
   - Add "Auto-group by array" to the CAR/CMR subgroup panel, e.g. SG1 = lateral (elec 1–64, `elec1-*`) and SG2 =
     medial (elec 65–128, `elec2-*`). Derive the arrays from the label bank (`elecA-NN` → A), not hardcoded ranges.
