@@ -7,7 +7,7 @@ A desktop app (Windows / macOS) for viewing and analyzing multi-channel neural r
 - Single-channel or overlay (up to 8 channels) time-series plots, smooth on recordings of 2+ hours
 - Filter chains: low-pass, high-pass, band-pass, notch, CAR and CMR, applied in any order
 - Spike detection (k × σ threshold, draggable on the plot) over the whole recording, shown as a raster
-- Live per-channel Vrms of the visible data (blanked samples excluded), shown in the plot corner
+- Live per-channel Vrms of the visible data (blanked samples excluded), shown in the plot header
 - Analog input viewer (below the main plot) with stimulation event detection: assign analog lines to modalities (ICMS, PNS, Tactor or your own), detect events, browse them in a table and correct onset/offset times
 - Stimulation artifact blanking per modality, with fixed or adaptive (per-channel recovery) padding, applied before filtering
 - FFT and Welch PSD on a selected time interval
@@ -49,23 +49,23 @@ pyinstaller --clean tdt_viewer.spec
 
 ## Usage
 
-1. **Open** a recording folder. Streams are listed on the left; click one to display it.
+1. **Open** a recording folder (or drop it on the window). The left card shows the recording's name, length, format, channels and sample rate; if it has several streams, click one to display it. **View → Show Recording Panel** (⌘1 / Ctrl+1) hides or shows the card. Messages (exports, detections, warnings) appear briefly at the bottom of the plots; click one to dismiss it.
 2. **Numbering**: channels are numbered by **electrode** by default (the trailing number of each label, e.g. `elec1-10` → electrode 10), everywhere in the app. **View → Number Channels By → Channel** switches to recording order (Ch 1 = first channel in the file). If a recording's labels have no unique electrode numbers (e.g. TDT), channel numbers are used.
-3. **Channels tab**: choose single or overlay mode, set the view range and toggle scatter (dot) mode. Each displayed channel's Vrms (of the visible data, blanked samples excluded) is shown in the top-right corner of the plot.
-4. **Navigate**: scroll to zoom time, drag to pan; the amplitude axis always fits the visible data. **Ctrl/⌘ + scroll** zooms amplitude (e.g. to see small spikes next to an artifact); double-click fits it to the data again.
+3. **Channels tab**: choose single or overlay mode, set the view range and toggle scatter (dot) mode. The header above the plot names the electrode (e.g. `Elec 10 · Ch 125 · elec1-10`), shows chips for the applied blanking and filters (amber = out of date or bypassed; hover for details), and the **RMS** of the visible data per trace (blanked samples excluded).
+4. **Navigate**: scroll to zoom time, drag to pan; the amplitude axis always fits the visible data. **Ctrl/⌘ + scroll** zooms amplitude (e.g. to see small spikes next to an artifact); double-click fits it to the data again. Keys: **←/→** pan, **+/−** zoom, **↑/↓** next/previous electrode, **[ / ]** previous/next event (Help → Keyboard Shortcuts). Spin boxes and tables keep their own arrow keys while they have focus.
 5. **Filters tab**: add filters, reorder them (they run top to bottom) and bypass them individually or all at once.
    - For **CAR/CMR**, create subgroups and click channels to assign them. Every channel must be assigned before you can confirm.
 6. **Analog Ch. panel** (bottom right) and analog plot (below the main plot):
    - **Channel selection** picks the analog input to show. **Edit List…** changes which channels count as analog; those are left out of the electrode lists and CAR/CMR.
    - **Assign Channel** maps the input to a modality and sets its polarity (active high/low), threshold (Auto = midpoint of idle and active levels), merge gap (pulses closer than this form one event) and minimum duration.
    - **Detect Events** scans every assigned input. Events are numbered per modality and listed in the table.
-   - **Event selection** or clicking a row jumps to that event. **Sync to Raw Data Viewer** links the two plots' time axes.
+   - **Event selection** or clicking a row jumps to that event. **Sync X-axes** links the two plots' time axes.
    - **Correct an event** by double-clicking its Onset/Offset cell or dragging its dashed line on the analog plot. Edited times are bold; right-click a row to reset.
 7. **Blanking tab** (needs detected events): one sub-tab per modality.
    - **Basic** blanks every electrode from onset − pre-pad to offset + post-pad and fills the gap linearly.
    - **Advanced** blanks from onset − pre-pad until, per channel, *N* consecutive windows have spike-band (250–5000 Hz) RMS below *k* × that channel's baseline (measured on clean stretches ≥ 3 s from any event), within the min/max post-pad. Choose trials and linear or cubic interpolation.
    - **Apply Blanking** / **Remove Blanking**. Blanking runs before the filter chain in the plot, Analysis and Export; blanked spans are shaded grey.
-8. **Spike Detection tab**: threshold = *k* × σ (default 4.75), with σ = median(|x|)/0.6745 of the filtered, blanked data in view (blanked samples excluded). Choose polarity (negative, positive, both) and a refractory period (2 ms). While the tab is open, the Time Series plot shows the threshold as a red dashed line (Single Channel mode; drag it to change *k*). σ is a spike-robust noise estimate, not the Vrms shown in the plot corner. Add a high-pass or band-pass first (e.g. 250–5000 Hz); the tab warns if there is none.
+8. **Spike Detection tab**: threshold = *k* × σ (default 4.75), with σ = median(|x|)/0.6745 of the filtered, blanked data in view (blanked samples excluded). Choose polarity (negative, positive, both) and a refractory period (2 ms). While the tab is open, the Time Series plot shows the threshold as a red dashed line (Single Channel mode; drag it to change *k*). σ is a spike-robust noise estimate, not the RMS shown in the plot header. Add a high-pass or band-pass first (e.g. 250–5000 Hz); the tab warns if there is none.
    - **Detect Spikes (whole recording)** freezes each electrode's σ from the current view (pick a representative view of at least ~5 s), then runs through the whole recording with the current blanking and filters (a spike = the first sample past the threshold; crossings on blanked samples are ignored; refractory period applied). About 4 minutes for a 16-minute, 128-channel recording.
    - Results appear in the **Raster** tab (one row per electrode, a tick per spike, stimulus events shaded, time axis linked with the other plots). Click a row to open that electrode; hover for its spike count and rate. Results are saved with the session and marked out of date if blanking, filters or threshold settings change.
 9. **Analysis tab**: pick FFT or PSD, choose an interval (type it in or drag on the plot), then click **Analyze**. Results appear in the Spectrum tab.

@@ -11,9 +11,9 @@ delete details that the code or git history already records.
 | | |
 |---|---|
 | Active branch | `NSP_Basic` (not pushed; branched from `main` @ `beb2da4`) |
-| Last commit | `ec903d7` Dark theme: dark plots with faint grids, µV/mV axes, one font policy |
-| Tests | 109 passing: `tdtgui/bin/python -m unittest discover tests` |
-| Next step | User tests UI-1 (dark theme); then UI-2: plot header + left card + status bar → toast (§4) |
+| Last commit | UI-2: plot header, recording card, toasts, shortcuts (see `git log`) |
+| Tests | 111 passing: `tdtgui/bin/python -m unittest discover tests` |
+| Next step | User tests UI-2; then pick from "Later" (§4) |
 
 ### Done
 1. Analog input viewer and event detection (`78664d0`).
@@ -42,6 +42,17 @@ delete details that the code or git history already records.
     - Dark theme (`ui/theme.py`) on all plots: faint grid, no axis box, monospace ticks.
     - µV/mV axes, done by scaling tick labels only.
     - One font policy, text roles in place of inline styles, accent-filled primary buttons.
+11. (`9c7f5fc`) Accent changed to `#CC79A7` (user), with dark text on accent fills for contrast. Thin 4 px progress bars
+    via `theme.progress_dialog`, with the percentage in the dialog text. Analog "Sync to Raw Data Viewer" renamed
+    "Sync X-axes".
+12. UI-2:
+    - A Time Series header: the title (`Elec 10 · Ch 125 · elec1-10` / `N electrodes`), blanking/filter chips (amber
+      when stale or bypassed) and an RMS chip, replacing the corner TextItem.
+    - The left panel is now a compact recording card (`StreamPanel`): middle-elided name, the stream list only when
+      there are 2+ streams, and View → Show Recording Panel (⌘1).
+    - The status bar is removed; messages go to a `Toast` (`ui/toast.py`).
+    - Empty-state hints, keyboard shortcuts, and control tabs wrapped in scroll areas so they never squash at
+      1200×800.
 
 ### Branches
 - **`main`:** the TDT/Blackrock viewer with filters, FFT/PSD, probe map, export and `.ccf` info.
@@ -88,6 +99,7 @@ ui/main_window.py     layout, signal wiring, plot buffering, detection/progress 
 ui/analog_plot.py     analog plot: draggable onset/offset lines, event highlight
 ui/analog_panel.py    Analog Ch. panel + AssignChannelDialog + AnalogListDialog
 ui/blanking_panel.py  Blanking tab: one ModalityBlankingPage (Basic | Advanced) per modality with events
+ui/stream_panel.py    left recording card;  ui/toast.py  transient messages;  ui/theme.py  tokens, QSS, plot styling
 tests/                unittest; test_blackrock.py has write_nsx_23() to build synthetic .nsX files
 ```
 
@@ -192,13 +204,26 @@ tests/                unittest; test_blackrock.py has write_nsx_23() to build sy
       tables.
   - The checkmark lives in `ui/assets/check.svg`, bundled via the spec.
   - `ui/__init__.py` is lazy, so `ui.theme` loads without pyqtgraph and the splash shows immediately.
-  - **No `QGraphicsEffect`, animations or antialiasing.** Redraws are unchanged: ~12 ms, and 15 zoom steps take ~0.5 s
+  - **No `QGraphicsEffect`, animations or antialiasing.** Redraws are unchanged: ~11 ms, and 15 zoom steps take ~0.5 s
     (offscreen).
-  - **Planned UI-2:**
-    - a plot header with the title and an RMS chip, plus blanking/filter chips;
-    - the left panel as a compact, collapsible card with middle-elided names;
-    - the status bar replaced by a toast;
-    - empty states and keyboard shortcuts.
+  - **Re-polish gotcha:** `set_role` on an already-polished label updates colours but **not** padding or border sizes.
+    Roles that swap at runtime (chip ↔ chip-warning, toast variants) must share their box geometry, and a label's
+    role must be set before its first polish (`Toast.__init__`, `set_chips`).
+  - **Widgets:**
+    - `theme.ElidedLabel` (middle elision; its `sizeHint` asks for the full text so it un-elides).
+    - `theme.progress_dialog(text, parent, cancellable, maximum)`: always use it for progress dialogs.
+    - `Toast.show_message(text, INFO|WARNING|ERROR)` for transient messages. Filter warnings toast only when they
+      change.
+  - **Plot header (`TimeSeriesPlot`):**
+    - `set_title` is called only when the plotted channels change.
+    - `set_vrms` runs on every render, so it only sets text when it has changed.
+    - `set_chips` is fed by `MainWindow._update_plot_chips()`, which every blanking, filter or stale change must call.
+  - **Shortcuts (`MainWindow._setup_shortcuts`):**
+    - Window-wide `QShortcut`s: ←/→ pan, +/− zoom, ↑/↓ electrode, [ / ] event.
+    - Spin boxes, tables and combos don't claim Up/Down, so when one of them (`_KEY_INPUTS`) has focus, `_on_plot_key`
+      re-sends the key to it.
+    - The shortcuts are disabled while it does this; otherwise the re-sent key triggers them again, recursing until
+      a `SystemError`.
 - **Plotting:**
   - Only a buffer of about 3× the view is read from disk, and it is min/max-decimated to ≤ 8000 points.
   - The analog plot keeps its own buffer and `WorkerManager`. It is x-linked to the main plot when Sync is on.

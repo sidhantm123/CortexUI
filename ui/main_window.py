@@ -4,7 +4,7 @@ import os
 from pathlib import Path
 from typing import Optional
 
-from PySide6.QtCore import Qt, Slot, QTimer, QSettings
+from PySide6.QtCore import Qt, Slot, QTimer, QSettings, QEvent
 from PySide6.QtWidgets import (
     QMainWindow,
     QWidget,
@@ -12,7 +12,6 @@ from PySide6.QtWidgets import (
     QHBoxLayout,
     QSplitter,
     QTabWidget,
-    QStatusBar,
     QMenuBar,
     QMenu,
     QFileDialog,
@@ -20,8 +19,14 @@ from PySide6.QtWidgets import (
     QLabel,
     QApplication,
     QDialog,
+    QAbstractSpinBox,
+    QAbstractItemView,
+    QComboBox,
+    QLineEdit,
+    QAbstractSlider,
+    QScrollArea,
 )
-from PySide6.QtGui import QAction, QActionGroup, QDragEnterEvent, QDropEvent
+from PySide6.QtGui import QAction, QActionGroup, QDragEnterEvent, QDropEvent, QKeyEvent, QKeySequence, QShortcut
 
 import numpy as np
 
@@ -57,6 +62,23 @@ from .spike_panel import SpikePanel
 from .raster_plot import RasterPlot
 from .plot_widget import format_volts
 from .theme import set_role, set_primary, progress_dialog
+from .toast import Toast, INFO, WARNING, ERROR
+
+
+# Focused widgets that keep the plot shortcut keys (arrows, +, −, [, ]) for themselves
+_KEY_INPUTS = (QAbstractSpinBox, QAbstractItemView, QComboBox, QLineEdit, QAbstractSlider)
+_KEY_TEXT = {Qt.Key.Key_Plus: "+", Qt.Key.Key_Equal: "=", Qt.Key.Key_Minus: "-",
+             Qt.Key.Key_BracketLeft: "[", Qt.Key.Key_BracketRight: "]"}
+
+
+def _scrolling(widget: QWidget) -> QScrollArea:
+    """Let a control tab scroll instead of squashing its widgets when the window is short."""
+    scroll = QScrollArea()
+    scroll.setWidget(widget)
+    scroll.setWidgetResizable(True)
+    scroll.setFrameShape(QScrollArea.Shape.NoFrame)
+    scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+    return scroll
 
 
 def _placeholder_tab(text: str) -> QWidget:
@@ -130,9 +152,11 @@ class MainWindow(QMainWindow):
         self._export_worker: Optional[ExportWorker] = None
         self._spike_worker: Optional[SpikeDetectWorker] = None
 
+        self._last_filter_warning = ""  # shown once until it changes
+
         self._setup_ui()
         self._setup_menu()
-        self._setup_statusbar()
+        self._setup_shortcuts()
         self._connect_signals()
 
         # Enable drag and drop
@@ -149,9 +173,9 @@ class MainWindow(QMainWindow):
         # Main splitter
         self._main_splitter = QSplitter(Qt.Orientation.Horizontal)
 
-        # Left panel: Stream list
+        # Left panel: compact recording card (View → Show Recording Panel, or drag it shut)
         self._stream_panel = StreamPanel()
-        self._stream_panel.setMaximumWidth(250)
+        self._stream_panel.setMaximumWidth(260)
         self._stream_panel.setMinimumWidth(150)
         self._main_splitter.addWidget(self._stream_panel)
 
@@ -185,6 +209,8 @@ class MainWindow(QMainWindow):
         center_splitter.setSizes([650, 280])
         center_layout.addWidget(center_splitter)
         self._main_splitter.addWidget(center_widget)
+        # Messages float over the plots (there is no status bar)
+        self._toast = Toast(center_widget)
 
         # Right panel: Controls
         right_widget = QWidget()
@@ -197,7 +223,7 @@ class MainWindow(QMainWindow):
 
         # Channel control tab
         self._control_panel = ControlPanel()
-        self._control_tabs.addTab(self._control_panel, "Channels")
+        self._control_tabs.addTab(_scrolling(self._control_panel), "Channels")
 
         # Blanking tab
         self._blanking_panel = BlankingPanel(self._app_state)
@@ -205,15 +231,15 @@ class MainWindow(QMainWindow):
 
         # Filter tab
         self._filter_panel = FilterPanel()
-        self._control_tabs.addTab(self._filter_panel, "Filters")
+        self._control_tabs.addTab(_scrolling(self._filter_panel), "Filters")
 
         # Spike detection tab
         self._spike_panel = SpikePanel()
-        self._spike_tab_index = self._control_tabs.addTab(self._spike_panel, "Spike Detection")
+        self._spike_tab_index = self._control_tabs.addTab(_scrolling(self._spike_panel), "Spike Detection")
 
         # Spectrum analysis tab
         self._spectrum_panel = SpectrumPanel()
-        self._control_tabs.addTab(self._spectrum_panel, "Analysis")
+        self._control_tabs.addTab(_scrolling(self._spectrum_panel), "Analysis")
 
         # Probe map tab
         self._probe_map = ProbeMapWidget()
@@ -235,7 +261,8 @@ class MainWindow(QMainWindow):
         self._main_splitter.addWidget(right_widget)
 
         # Set splitter sizes
-        self._main_splitter.setSizes([200, 700, 340])
+        self._main_splitter.setSizes([190, 710, 340])
+        self._main_splitter.splitterMoved.connect(self._on_main_splitter_moved)
 
         main_layout.addWidget(self._main_splitter)
 
@@ -294,6 +321,15 @@ class MainWindow(QMainWindow):
 
         view_menu.addSeparator()
 
+        self._show_recording_action = QAction("Show Recording Panel", self, checkable=True)
+        self._show_recording_action.setShortcut("Ctrl+1")
+        self._show_recording_action.toggled.connect(self._set_recording_panel_visible)
+        view_menu.addAction(self._show_recording_action)
+        self._show_recording_action.setChecked(
+            self._settings.value("show_recording_panel", True, type=bool)
+        )
+        self._set_recording_panel_visible(self._show_recording_action.isChecked())
+
         recording_info = QAction("Recording Info...", self)
         recording_info.setShortcut("Ctrl+I")
         recording_info.triggered.connect(self._on_recording_info)
@@ -317,6 +353,10 @@ class MainWindow(QMainWindow):
 
         # Help menu
         help_menu = menubar.addMenu("Help")
+
+        shortcuts_action = QAction("Keyboard Shortcuts", self)
+        shortcuts_action.triggered.connect(self._on_show_shortcuts)
+        help_menu.addAction(shortcuts_action)
 
         about_action = QAction("About", self)
         about_action.triggered.connect(self._on_about)
@@ -349,19 +389,125 @@ class MainWindow(QMainWindow):
         view_start, view_end = state.get_view_range()
         self._rerender_from_buffer(view_start, view_end, state)
 
-    def _setup_statusbar(self):
-        """Set up the status bar."""
-        self._statusbar = QStatusBar()
-        self.setStatusBar(self._statusbar)
+    def _set_recording_panel_visible(self, visible: bool):
+        self._stream_panel.setVisible(visible)
+        if visible and self._main_splitter.sizes()[0] == 0:  # was dragged shut
+            sizes = self._main_splitter.sizes()
+            sizes[0], sizes[1] = 190, max(200, sizes[1] - 190)
+            self._main_splitter.setSizes(sizes)
+        self._settings.setValue("show_recording_panel", visible)
 
-        self._status_label = QLabel("Ready - Open a TDT or Blackrock recording folder to begin")
-        self._statusbar.addWidget(self._status_label, 1)
+    def _on_main_splitter_moved(self, *_):
+        if self._stream_panel.isVisible() and self._main_splitter.sizes()[0] == 0:
+            self._show_recording_action.setChecked(False)
 
-        self._blanking_indicator = QLabel("")
-        self._statusbar.addPermanentWidget(self._blanking_indicator)
+    # ------------------------------------------------------------------ keyboard shortcuts
 
-        self._filter_indicator = QLabel("")
-        self._statusbar.addPermanentWidget(self._filter_indicator)
+    SHORTCUTS = [
+        ("← / →", "Pan back / forward by a quarter of the view"),
+        ("+ / −", "Zoom time in / out"),
+        ("↑ / ↓", "Next / previous electrode (Single mode)"),
+        ("[ / ]", "Previous / next event"),
+        ("⌘R / Ctrl+R", "Reset view"),
+        ("⌘1 / Ctrl+1", "Show or hide the recording panel"),
+    ]
+
+    def _setup_shortcuts(self):
+        """
+        Plot navigation keys. Text fields, spin boxes, lists and tables keep their own
+        arrow keys (Qt lets the focused widget claim a key before a shortcut fires).
+        """
+        K = Qt.Key
+        bindings = [
+            ((K.Key_Left,), lambda: self._pan_view(-0.25)),
+            ((K.Key_Right,), lambda: self._pan_view(0.25)),
+            ((K.Key_Plus, K.Key_Equal), lambda: self._zoom_view(0.5)),
+            ((K.Key_Minus,), lambda: self._zoom_view(2.0)),
+            ((K.Key_Up,), lambda: self._step_electrode(1)),
+            ((K.Key_Down,), lambda: self._step_electrode(-1)),
+            ((K.Key_BracketLeft,), lambda: self._step_event(-1)),
+            ((K.Key_BracketRight,), lambda: self._step_event(1)),
+        ]
+        self._plot_shortcuts = []
+        for keys, handler in bindings:
+            for key in keys:
+                shortcut = QShortcut(QKeySequence(key), self)
+                shortcut.activated.connect(lambda k=key, h=handler: self._on_plot_key(k, h))
+                self._plot_shortcuts.append(shortcut)
+
+    def _on_plot_key(self, key, handler):
+        """Run a plot shortcut, unless an input that uses this key (spin box, table, list) has focus."""
+        focus = QApplication.focusWidget()
+        if isinstance(focus, _KEY_INPUTS):
+            # Hand the key back; shortcuts are off meanwhile, or the key would trigger them again
+            text = _KEY_TEXT.get(key, "")
+            for shortcut in self._plot_shortcuts:
+                shortcut.setEnabled(False)
+            try:
+                for kind in (QEvent.Type.KeyPress, QEvent.Type.KeyRelease):
+                    QApplication.sendEvent(focus, QKeyEvent(kind, key, Qt.KeyboardModifier.NoModifier, text))
+            finally:
+                for shortcut in self._plot_shortcuts:
+                    shortcut.setEnabled(True)
+            return
+        handler()
+
+    def _pan_view(self, fraction: float):
+        state = self._app_state.get_current_state()
+        if state is None:
+            return
+        start, end = state.get_view_range()
+        width = end - start
+        start = min(max(0.0, start + fraction * width), max(0.0, state.duration - width))
+        self._on_view_range_requested(start, start + width)
+
+    def _zoom_view(self, factor: float):
+        state = self._app_state.get_current_state()
+        if state is None:
+            return
+        start, end = state.get_view_range()
+        mid = (start + end) / 2
+        width = min(max((end - start) * factor, 10.0 / state.sample_rate), state.duration)
+        start = min(max(0.0, mid - width / 2), state.duration - width)
+        self._on_view_range_requested(start, start + width)
+
+    def _step_electrode(self, step: int):
+        state = self._app_state.get_current_state()
+        if state is None or state.channel_mode != ChannelMode.SINGLE:
+            return
+        order = state.ordered_neural_channels()
+        if state.selected_channel not in order:
+            return
+        i = order.index(state.selected_channel) + step
+        if 0 <= i < len(order):
+            state.selected_channel = order[i]
+            self._control_panel.set_state(state)
+            self._probe_map.set_selected_channel(order[i])
+            self._refresh_plot()
+
+    def _step_event(self, step: int):
+        """Jump to the event before/after the centre of the view (all modalities)."""
+        state = self._app_state.get_current_state()
+        events = sorted(self._app_state.events, key=lambda e: e.onset)
+        if state is None or not events:
+            return
+        start, end = state.get_view_range()
+        mid = (start + end) / 2
+        if step > 0:
+            target = next((e for e in events if (e.onset + e.offset) / 2 > mid + 1e-6), None)
+        else:
+            target = next((e for e in reversed(events) if (e.onset + e.offset) / 2 < mid - 1e-6), None)
+        if target is not None:
+            self._analog_panel.show_selected_event(target)
+            self._on_event_selected(target)
+
+    def _on_show_shortcuts(self):
+        rows = "".join(f"<tr><td><b>{k}</b>&nbsp;&nbsp;&nbsp;</td><td>{v}</td></tr>" for k, v in self.SHORTCUTS)
+        QMessageBox.information(
+            self, "Keyboard Shortcuts",
+            f"<table>{rows}</table><p>Mouse: scroll zooms time, drag pans, Ctrl/⌘+scroll zooms "
+            "amplitude, double-click fits amplitude to the visible data.</p>",
+        )
 
     def _connect_signals(self):
         """Connect all signals."""
@@ -424,6 +570,7 @@ class MainWindow(QMainWindow):
         # Blanking
         self._blanking_panel.apply_requested.connect(self._on_apply_blanking)
         self._blanking_panel.remove_requested.connect(self._on_remove_blanking)
+        self._blanking_panel.stale_changed.connect(self._update_plot_chips)
 
     def _on_open_folder(self):
         """Handle open folder action."""
@@ -452,12 +599,12 @@ class MainWindow(QMainWindow):
 
             # Select first stream
             if block.streams:
-                first_stream = list(block.streams.keys())[0]
+                first_stream = self._stream_panel.get_selected_stream() or list(block.streams.keys())[0]
                 self._on_stream_selected(first_stream)
 
             self._reset_analog_view()
-            self._update_status()
-            self._update_blanking_indicator()
+            self._update_recording_card()
+            self._time_plot.set_empty(False)
 
         except Exception as e:
             QMessageBox.critical(
@@ -505,8 +652,7 @@ class MainWindow(QMainWindow):
             # Load and display data
             self._refresh_plot()
 
-            self._update_status()
-            self._update_blanking_indicator()
+            self._update_plot_chips()
 
     @Slot(ChannelMode)
     def _on_channel_mode_changed(self, mode: ChannelMode):
@@ -582,7 +728,6 @@ class MainWindow(QMainWindow):
             self._refresh_plot()
         else:
             self._apply_filters()
-        self._update_status()
 
     @Slot(bool)
     def _on_scatter_mode_changed(self, enabled: bool):
@@ -730,7 +875,7 @@ class MainWindow(QMainWindow):
             lambda result, s=seq: self._on_data_loaded_async(result, s)
         )
         worker.signals.error.connect(
-            lambda err: self._status_label.setText(f"Error loading data: {err}")
+            lambda err: self._toast.show_message(f"Error loading data: {err}", ERROR)
         )
         self._worker_manager.submit(worker)
 
@@ -817,6 +962,7 @@ class MainWindow(QMainWindow):
             self._time_plot.set_data(
                 plot_data, plot_time, channels, [state.channel_label(c) for c in channels]
             )
+            self._time_plot.set_title(*self._plot_title(state, channels))
             self._last_plot_channels = channels
             self._last_scatter_mode = scatter
 
@@ -844,8 +990,10 @@ class MainWindow(QMainWindow):
             all_channel_data=raw_all,
             channel_indices=channels,
         )
-        if warnings:
-            self._status_label.setText(f"Filter warning: {warnings[0]}")
+        warning = warnings[0] if warnings else ""
+        if warning and warning != self._last_filter_warning:
+            self._toast.show_message(f"Filter warning: {warning}", WARNING)
+        self._last_filter_warning = warning
 
         # Cache the full-resolution filtered buffer
         self._filtered_data = data
@@ -858,15 +1006,7 @@ class MainWindow(QMainWindow):
         view_start, view_end = state.get_view_range()
         self._rerender_from_buffer(view_start, view_end, state)
 
-        # Update filter indicator
-        if state.filters:
-            if state.global_bypass:
-                self._filter_indicator.setText("Filters: BYPASSED")
-            else:
-                active = sum(1 for f in state.filters if not f.bypassed)
-                self._filter_indicator.setText(f"Filters: {active} active")
-        else:
-            self._filter_indicator.setText("")
+        self._update_plot_chips()
 
     # ------------------------------------------------------------------ analog viewer
 
@@ -878,7 +1018,7 @@ class MainWindow(QMainWindow):
         self._analog_panel.refresh()
         self._analog_panel.set_summary("")
         self._blanking_panel.refresh()
-        self._update_blanking_indicator()
+        self._update_plot_chips()
         self._update_spike_view()
         self._analog_plot.highlight_event(None)
         self._update_analog_events()
@@ -940,9 +1080,11 @@ class MainWindow(QMainWindow):
             self._last_plot_channels = []
             self._buffer_channels = []
             self._refresh_plot()
+        self._update_recording_card()
         self._app_state.mark_blanking_stale()  # electrode set changed
         self._on_spike_inputs_changed()
         self._blanking_panel.update_status()
+        self._update_plot_chips()
         self._update_analog_events()
         self._refresh_analog()
 
@@ -1000,7 +1142,7 @@ class MainWindow(QMainWindow):
             lambda result, s=seq, k=key, b=(buf_start, buf_end): self._on_analog_loaded(result, s, k, b)
         )
         worker.signals.error.connect(
-            lambda err: self._status_label.setText(f"Error loading analog data: {err}")
+            lambda err: self._toast.show_message(f"Error loading analog data: {err}", ERROR)
         )
         self._analog_workers.submit(worker)
 
@@ -1170,7 +1312,7 @@ class MainWindow(QMainWindow):
             self._app_state.spike_results[state.stream_name] = result
             self._update_spike_view()
             self._plot_tabs.setCurrentIndex(self._raster_tab_index)
-            self._status_label.setText(f"Detected {result.total():,} spikes")
+            self._toast.show_message(f"Detected {result.total():,} spikes")
 
         def failed(err):
             progress.close()
@@ -1228,16 +1370,52 @@ class MainWindow(QMainWindow):
             lines.append(f"  {r.modality}: {how}, {r.interpolation} interpolation, {r.summary()}{stale}")
         return lines
 
-    def _update_blanking_indicator(self):
+    def _update_plot_chips(self):
+        """Blanking and filter chips in the Time Series header."""
         state = self._app_state.get_current_state()
-        results = self._app_state.active_blanking(state.stream_name) if state else []
-        names = ", ".join(r.modality for r in results)
-        self._blanking_indicator.setText(f"Blanking: {names}" if names else "")
+        if state is None:
+            self._time_plot.set_chips([])
+            return
+        chips = []
+        results = self._app_state.active_blanking(state.stream_name)
+        if results:
+            stale = [r.modality for r in results if r.stale]
+            tooltip = "Stimulation artifacts are blanked (interpolated across) before filtering.\n" + "\n".join(
+                line.strip() for line in self._blanking_summary_lines(state.stream_name)
+            )
+            if stale:
+                tooltip += f"\nOut of date: {', '.join(stale)} — events or settings changed; apply again."
+            chips.append(("Blanked: " + ", ".join(r.modality for r in results), tooltip, bool(stale)))
+        if state.filters and state.global_bypass:
+            chips.append(("Filters bypassed", "All filters are bypassed: the plot shows unfiltered data", True))
+        else:
+            active = [f for f in state.filters if not f.bypassed]
+            if active:
+                names = [f.get_display_name() for f in active]
+                text = " → ".join(n.split(" (")[0] for n in names) if len(active) <= 2 else f"{len(active)} filters"
+                tooltip = "Filters, applied in order:\n" + "\n".join(f"{i}. {n}" for i, n in enumerate(names, 1))
+                chips.append((text, tooltip, False))
+        self._time_plot.set_chips(chips)
+
+    def _plot_title(self, state, channels) -> tuple:
+        """Header title and tooltip: 'Elec 10 · Ch 125 · elec1-10', or 'N electrodes' in overlay."""
+        def describe(c):
+            parts = [f"Ch {c + 1}"]
+            if state.uses_electrode_numbers and c in state.electrode_numbers:
+                parts.insert(0, f"Elec {state.electrode_numbers[c]}")
+            if state.channel_labels and c < len(state.channel_labels) and state.channel_labels[c]:
+                parts.append(state.channel_labels[c])
+            return " · ".join(parts)
+
+        if len(channels) == 1:
+            return describe(channels[0]), ""
+        noun = "electrodes" if state.uses_electrode_numbers else "channels"
+        return f"{len(channels)} {noun}", "\n".join(describe(c) for c in channels)
 
     def _blanking_changed(self):
         """Blanking was applied or removed: re-process the loaded buffer."""
         self._blanking_panel.update_status()
-        self._update_blanking_indicator()
+        self._update_plot_chips()
         self._on_spike_inputs_changed()
         self._apply_filters()
 
@@ -1276,7 +1454,7 @@ class MainWindow(QMainWindow):
             progress.close()
             self._app_state.blanking_results[modality] = result
             self._blanking_changed()
-            self._status_label.setText(f"Blanking {modality}: {result.summary()}")
+            self._toast.show_message(f"Blanking {modality}: {result.summary()}")
 
         def failed(err):
             progress.close()
@@ -1300,6 +1478,7 @@ class MainWindow(QMainWindow):
         """An event's onset/offset was edited in the table."""
         self._analog_plot.refresh_events()
         self._blanking_panel.refresh()
+        self._update_plot_chips()
 
     @Slot(object, str, float)
     def _on_event_dragged(self, event, edge: str, t: float):
@@ -1312,6 +1491,7 @@ class MainWindow(QMainWindow):
         self._analog_panel.show_selected_event(event)
         self._analog_plot.refresh_events()
         self._blanking_panel.refresh()
+        self._update_plot_chips()
 
     @Slot()
     def _on_detect_events(self):
@@ -1364,7 +1544,7 @@ class MainWindow(QMainWindow):
             self._analog_panel.set_summary("\n".join(lines))
             self._analog_panel.refresh()
             self._update_analog_events()
-            self._status_label.setText(f"Detected {len(result['events'])} events")
+            self._toast.show_message(f"Detected {len(result['events'])} events")
 
         def failed(err):
             progress.close()
@@ -1378,26 +1558,11 @@ class MainWindow(QMainWindow):
         self._worker_manager.thread_pool.start(worker)
         progress.show()
 
-    def _update_status(self):
-        """Update status bar."""
-        state = self._app_state.get_current_state()
-        block = self._app_state.block
-
-        if block and state:
-            duration_str = f"{state.duration:.1f}s"
-            if state.duration >= 60:
-                mins = int(state.duration // 60)
-                secs = state.duration % 60
-                duration_str = f"{mins}m {secs:.1f}s"
-
-            self._status_label.setText(
-                f"Block: {block.name} | "
-                f"Stream: {state.stream_name} | "
-                f"{state.num_channels} ch @ {state.sample_rate:.0f} Hz | "
-                f"Duration: {duration_str}"
-            )
-        else:
-            self._status_label.setText("Ready - Open a TDT or Blackrock recording folder to begin")
+    def _update_recording_card(self):
+        """Recording card details (analog counts follow the user's analog-list edits)."""
+        self._stream_panel.set_analog_counts(
+            {name: len(st.analog_channels) for name, st in self._app_state.stream_states.items()}
+        )
 
     def _on_save_session(self):
         """Save current session to file."""
@@ -1417,7 +1582,7 @@ class MainWindow(QMainWindow):
         if filepath:
             try:
                 self._app_state.save_session(filepath)
-                self._status_label.setText(f"Session saved to {filepath}")
+                self._toast.show_message(f"Session saved to {filepath}")
             except Exception as e:
                 QMessageBox.warning(
                     self, "Save Error", f"Failed to save session:\n\n{e}"
@@ -1452,7 +1617,9 @@ class MainWindow(QMainWindow):
                     self._probe_map.set_probe(self._app_state.probe)
                     self._filter_panel.set_probe(self._app_state.probe)
 
-                self._status_label.setText(f"Session loaded from {filepath}")
+                self._update_recording_card()
+                self._time_plot.set_empty(self._app_state.block is None)
+                self._toast.show_message(f"Session loaded from {filepath}")
                 if self._app_state.load_messages:
                     QMessageBox.information(
                         self, "Session Loaded", "\n\n".join(self._app_state.load_messages)
@@ -1511,9 +1678,7 @@ class MainWindow(QMainWindow):
 
         n = geometry.channel_count()
         n_shanks = len(geometry.get_shank_groups())
-        self._status_label.setText(
-            f"Probe loaded: {n} contacts across {n_shanks} shanks"
-        )
+        self._toast.show_message(f"Probe loaded: {n} contacts across {n_shanks} shanks")
 
     def _on_export_binary(self):
         """Export the current stream as an int16 binary file (.i16 / .bin)."""
@@ -1604,7 +1769,7 @@ class MainWindow(QMainWindow):
                 f"\n\n{result['n_clipped']:,} samples were clipped at the int16 limits; "
                 "consider a smaller scale factor." if result["n_clipped"] else ""
             )
-            self._status_label.setText(f"Exported: {filepath}")
+            self._toast.show_message(f"Exported: {filepath}")
             QMessageBox.information(
                 self,
                 "Export Complete",
@@ -1624,7 +1789,7 @@ class MainWindow(QMainWindow):
                 os.remove(filepath)
             except OSError:
                 pass
-            self._status_label.setText("Export cancelled")
+            self._toast.show_message("Export cancelled")
 
         worker.signals.result.connect(done)
         worker.signals.error.connect(failed)

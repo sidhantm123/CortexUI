@@ -8,9 +8,9 @@ import os
 import sys
 from typing import Optional
 
-from PySide6.QtCore import Qt
+from PySide6.QtCore import QSize, Qt
 from PySide6.QtGui import QColor, QFont, QFontDatabase, QPalette
-from PySide6.QtWidgets import QApplication, QProgressBar, QProgressDialog, QWidget
+from PySide6.QtWidgets import QApplication, QLabel, QProgressBar, QProgressDialog, QWidget
 
 # ---------------------------------------------------------------- colours
 WINDOW = "#16171A"
@@ -208,6 +208,24 @@ def _stylesheet() -> str:
     QLabel[role="error"] {{ color: {ERROR}; font-size: {SIZE_SMALL}px; }}
     QLabel[role="success"] {{ color: {SUCCESS}; font-size: {SIZE_SMALL}px; }}
     QLabel[role="mono"] {{ font-family: "{mono}"; font-size: {SIZE_SMALL}px; color: {TEXT_SECONDARY}; }}
+    QLabel[role="heading"] {{ color: {TEXT}; font-weight: 600; }}
+    QLabel[role="empty"] {{ color: {TEXT_SECONDARY}; background: {SURFACE}; }}
+
+    /* Chips in the plot header */
+    QWidget#plotHeader {{ background: {SURFACE}; }}
+    QLabel[role="chip"], QLabel[role="chip-mono"], QLabel[role="chip-warning"] {{
+        background: {RAISED}; border: 1px solid {BORDER}; border-radius: 9px; padding: 1px 8px;
+        color: {TEXT_SECONDARY}; font-size: {SIZE_SMALL}px; }}
+    QLabel[role="chip-mono"] {{ font-family: "{mono}"; color: {TEXT}; }}
+    QLabel[role="chip-warning"] {{ color: {WARNING}; border-color: {WARNING}; }}
+
+    /* Toast messages over the plot area */
+    /* Variants differ in colour only: a re-polished label keeps its first padding/border sizes */
+    QLabel[role="toast"], QLabel[role="toast-warning"], QLabel[role="toast-error"] {{
+        background: {RAISED}; color: {TEXT}; border: 1px solid {BORDER}; border-left: 3px solid {ACCENT};
+        border-radius: 6px; padding: 6px 12px; }}
+    QLabel[role="toast-warning"] {{ border-left-color: {WARNING}; }}
+    QLabel[role="toast-error"] {{ border-left-color: {ERROR}; }}
     """
 
 
@@ -220,12 +238,48 @@ def apply_theme(app: QApplication):
 
 
 def set_role(widget: QWidget, role: str):
-    """Give a label a text role (secondary / title / warning / error / success / mono)."""
+    """
+    Give a label a text role: secondary / title / heading / warning / error / success / mono,
+    chip / chip-mono / chip-warning, toast / toast-warning / toast-error, empty.
+
+    Switching roles later updates colours only (Qt keeps a label's first padding/border
+    sizes), so roles that are swapped at runtime must share their box geometry.
+    """
     if widget.property("role") == role:
         return
     widget.setProperty("role", role)
     widget.style().unpolish(widget)
     widget.style().polish(widget)
+
+
+class ElidedLabel(QLabel):
+    """One-line label that elides in the middle (start and end stay visible); full text in the tooltip."""
+
+    def __init__(self, text: str = "", parent=None, min_width: int = 1):
+        super().__init__(parent)
+        self._full = ""
+        self.setMinimumWidth(min_width)  # don't let long text widen the panel
+        self.set_full_text(text)
+
+    def sizeHint(self) -> QSize:
+        """Ask for room for the full text, so the label un-elides when space comes back."""
+        hint = super().sizeHint()
+        fm = self.fontMetrics()
+        return QSize(hint.width() + fm.horizontalAdvance(self._full) - fm.horizontalAdvance(self.text()),
+                     hint.height())
+
+    def set_full_text(self, text: str):
+        self._full = text
+        self.setToolTip(text)
+        self._elide()
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        self._elide()
+
+    def _elide(self):
+        width = max(1, self.contentsRect().width())
+        super().setText(self.fontMetrics().elidedText(self._full, Qt.TextElideMode.ElideMiddle, width))
 
 
 def progress_dialog(text: str, parent: QWidget, cancellable: bool = True,

@@ -3,7 +3,7 @@ from typing import List, Optional, Dict, Tuple
 import numpy as np
 
 from PySide6.QtCore import Signal, Qt
-from PySide6.QtWidgets import QWidget, QVBoxLayout
+from PySide6.QtWidgets import QWidget, QVBoxLayout, QHBoxLayout, QLabel, QStackedWidget
 from PySide6.QtGui import QColor
 
 import pyqtgraph as pg
@@ -21,8 +21,28 @@ pg.setConfigOptions(
 # Mouse help shown as the tooltip of time-series plots
 TIME_PLOT_HINT = (
     "Scroll: zoom time · Drag: pan · Ctrl/⌘+scroll: zoom amplitude · "
-    "Double-click: fit amplitude to the visible data"
+    "Double-click: fit amplitude to the visible data\n"
+    "Keys: ←/→ pan · +/− zoom · ↑/↓ next/previous electrode · [ / ] previous/next event"
 )
+
+EMPTY_RECORDING_HINT = "Open a recording folder (⌘O / Ctrl+O)\nor drop one on the window"
+RMS_TOOLTIP = "RMS of the visible data, blanked samples excluded"
+MAX_RMS_CHIP_TRACES = 3  # overlay: more traces are listed in the tooltip only
+
+
+class EmptyStack(QStackedWidget):
+    """A plot with a centred hint shown in its place while there is nothing to plot."""
+
+    def __init__(self, plot: QWidget, hint: str, parent=None):
+        super().__init__(parent)
+        self._hint = QLabel(hint)
+        self._hint.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        theme.set_role(self._hint, "empty")
+        self.addWidget(self._hint)
+        self.addWidget(plot)
+
+    def set_empty(self, empty: bool):
+        self.setCurrentIndex(0 if empty else 1)
 
 # Ctrl on Windows/Linux; on macOS Qt reports ⌘ as Control and Ctrl as Meta, so accept both
 _AMPLITUDE_ZOOM_KEYS = Qt.KeyboardModifier.ControlModifier | Qt.KeyboardModifier.MetaModifier
@@ -132,24 +152,62 @@ class TimeSeriesPlot(QWidget):
         self._threshold_lines: List[pg.InfiniteLine] = []
         self._dragging_threshold = False
 
-        # Vrms readout in the top-right corner (doesn't take mouse input)
-        vb = self._plot.getViewBox()
-        self._vrms_text = pg.TextItem("", anchor=(1, 0))
-        self._vrms_text.setParentItem(vb)
-        self._vrms_text.setAcceptedMouseButtons(Qt.MouseButton.NoButton)
-        self._vrms_text.setToolTip("RMS of the visible data, blanked samples excluded")
-        vb.sigResized.connect(self._place_vrms_text)
-        self._place_vrms_text()
-
     def _setup_ui(self):
-        """Set up the widget layout."""
+        """Header (title + chips) above the plot; a hint replaces both until a recording is open."""
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(0)
 
-        # Create graphics layout widget
+        self._header = QWidget()
+        self._header.setObjectName("plotHeader")
+        self._header.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
+        row = QHBoxLayout(self._header)
+        row.setContentsMargins(12, 6, 12, 2)
+        row.setSpacing(6)
+        self._title_label = theme.ElidedLabel("", min_width=100)  # elides when the header is narrow
+        theme.set_role(self._title_label, "heading")
+        row.addWidget(self._title_label, 1)
+        self._chip_row = QHBoxLayout()
+        self._chip_row.setSpacing(6)
+        row.addLayout(self._chip_row)
+        self._chips: List[QLabel] = []  # blanking / filter state, reused between updates
+        self._rms_chip = QLabel("")
+        theme.set_role(self._rms_chip, "chip-mono")
+        self._rms_chip.setTextFormat(Qt.TextFormat.RichText)
+        self._rms_chip.hide()
+        row.addWidget(self._rms_chip)
+        self._rms_html = ""
+        layout.addWidget(self._header)
+
         self._graphics_widget = pg.GraphicsLayoutWidget()
         self._graphics_widget.setToolTip(TIME_PLOT_HINT)
-        layout.addWidget(self._graphics_widget)
+        self._stack = EmptyStack(self._graphics_widget, EMPTY_RECORDING_HINT)
+        layout.addWidget(self._stack)
+        self.set_empty(True)
+
+    def set_empty(self, empty: bool):
+        """Show the 'open a recording' hint instead of the plot."""
+        self._stack.set_empty(empty)
+        self._header.setVisible(not empty)
+
+    def set_title(self, title: str, tooltip: str = ""):
+        self._title_label.set_full_text(title)
+        self._title_label.setToolTip(tooltip or title)
+
+    def set_chips(self, chips: List[Tuple[str, str, bool]]):
+        """Processing state chips: (text, tooltip, is_warning)."""
+        while len(self._chips) < len(chips):
+            label = theme.ElidedLabel("", min_width=60)
+            theme.set_role(label, "chip")  # before the first polish (fixes the padding)
+            self._chip_row.addWidget(label)
+            self._chips.append(label)
+        for label, (text, tooltip, warning) in zip(self._chips, chips):
+            label.set_full_text(text)
+            label.setToolTip(f"{text}\n{tooltip}")
+            theme.set_role(label, "chip-warning" if warning else "chip")
+            label.show()
+        for label in self._chips[len(chips):]:
+            label.hide()
 
     def _setup_plot(self):
         """Set up the plot axes."""
@@ -259,22 +317,29 @@ class TimeSeriesPlot(QWidget):
             if ch_idx in self._plot_items and i < data.shape[0]:
                 self._plot_items[ch_idx].setData(time_axis, data[i])
 
-    def _place_vrms_text(self, *_):
-        self._vrms_text.setPos(self._plot.getViewBox().width() - 6, 4)
-
     def set_vrms(self, entries: List[Tuple[str, float]]):
-        """Show 'name  Vrms' lines (in trace order and colors); NaN = fully blanked in view."""
-        lines = []
-        for i, (name, vrms) in enumerate(entries):
-            color = CHANNEL_COLORS[i % len(CHANNEL_COLORS)]
-            lines.append(
-                f'<span style="color:{color}; font-size:{theme.SIZE_SMALL}px;">{name}&nbsp;&nbsp;'
-                f'<span style="color:{theme.TEXT_SECONDARY};">RMS</span>&nbsp;{format_volts(vrms)}</span>'
-            )
-        self._vrms_text.setHtml(
-            f'<div style="background-color: rgba(30,31,34,200); text-align:right;">'
-            + "<br>".join(lines) + "</div>" if lines else ""
-        )
+        """
+        RMS chip: 'RMS 6.9 µV' for one trace; a coloured dot and value per trace in overlay
+        (the first few; all of them in the tooltip). NaN = fully blanked in view.
+        """
+        if not entries:
+            html, tooltip = "", ""
+        elif len(entries) == 1:
+            html = f"RMS {format_volts(entries[0][1])}"
+            tooltip = f"{entries[0][0]}\n{RMS_TOOLTIP}"
+        else:
+            parts = [
+                f'<span style="color:{CHANNEL_COLORS[i % len(CHANNEL_COLORS)]}">●</span>&nbsp;{format_volts(v)}'
+                for i, (_name, v) in enumerate(entries[:MAX_RMS_CHIP_TRACES])
+            ]
+            extra = len(entries) - MAX_RMS_CHIP_TRACES
+            html = "RMS&nbsp; " + "&nbsp;&nbsp;".join(parts) + (f"&nbsp;&nbsp;+{extra}" if extra > 0 else "")
+            tooltip = RMS_TOOLTIP + "\n" + "\n".join(f"{name}: {format_volts(v)}" for name, v in entries)
+        if html != self._rms_html:
+            self._rms_html = html
+            self._rms_chip.setText(html)
+            self._rms_chip.setVisible(bool(html))
+        self._rms_chip.setToolTip(tooltip)
 
     def set_threshold_lines(self, levels: List[float]):
         """
@@ -446,7 +511,12 @@ class SpectrumPlot(QWidget):
         layout.setContentsMargins(0, 0, 0, 0)
 
         self._graphics_widget = pg.GraphicsLayoutWidget()
-        layout.addWidget(self._graphics_widget)
+        self._stack = EmptyStack(
+            self._graphics_widget,
+            "No spectrum yet.\nChoose electrodes and an interval in the Analysis tab, then click Analyze.",
+        )
+        layout.addWidget(self._stack)
+        self._stack.set_empty(True)
 
     def _setup_plot(self):
         """Set up the plot axes."""
@@ -479,6 +549,7 @@ class SpectrumPlot(QWidget):
             self._plot.removeItem(item)
         self._plot_items.clear()
 
+        self._stack.set_empty(freqs is None or magnitude is None)
         if freqs is None or magnitude is None:
             return
 
@@ -547,3 +618,4 @@ class SpectrumPlot(QWidget):
         for item in self._plot_items.values():
             self._plot.removeItem(item)
         self._plot_items.clear()
+        self._stack.set_empty(True)

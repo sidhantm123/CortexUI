@@ -42,6 +42,7 @@ class ModalityBlankingPage(QWidget):
 
     apply_requested = Signal(str)
     remove_requested = Signal(str)
+    stale_changed = Signal()  # settings edited: an applied result is now out of date
 
     def __init__(self, app_state: AppState, modality: str, parent=None):
         super().__init__(parent)
@@ -250,6 +251,7 @@ class ModalityBlankingPage(QWidget):
         s.max_post_ms = max(self._max_post_spin.value(), s.min_post_ms)
         s.interpolation = CUBIC if self._cubic_radio.isChecked() else LINEAR
         self._app_state.mark_blanking_stale(self._modality)
+        self.stale_changed.emit()
         self._update_rule()
         self.update_status()
 
@@ -281,6 +283,7 @@ class BlankingPanel(QWidget):
 
     apply_requested = Signal(str)
     remove_requested = Signal(str)
+    stale_changed = Signal()  # settings edited: an applied result is now out of date
 
     def __init__(self, app_state: AppState, parent=None):
         super().__init__(parent)
@@ -324,6 +327,7 @@ class BlankingPanel(QWidget):
                 page = ModalityBlankingPage(self._app_state, m)
                 page.apply_requested.connect(self.apply_requested.emit)
                 page.remove_requested.connect(self.remove_requested.emit)
+                page.stale_changed.connect(self.stale_changed.emit)
                 self._pages[m] = page
                 self._tabs.addTab(page, m)
             if current in modalities:

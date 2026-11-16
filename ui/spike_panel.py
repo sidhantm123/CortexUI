@@ -47,7 +47,7 @@ class SpikePanel(QWidget):
         self._k_spin.setToolTip(
             "Spikes are crossings of k × σ. σ = median(|x|) / 0.6745 of the filtered, blanked data "
             "in view (blanked samples excluded): a noise estimate that spikes barely affect, unlike "
-            "Vrms (shown in the plot corner), which spikes and artifacts inflate. "
+            "the RMS (shown in the plot header), which spikes and artifacts inflate. "
             "Drag the dashed line on the plot to change k."
         )
         self._k_spin.valueChanged.connect(self._on_changed)
