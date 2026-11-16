@@ -11,7 +11,7 @@ delete details that the code or git history already records.
 | | |
 |---|---|
 | Active branch | `NSP_Basic` (not pushed; branched from `main` @ `beb2da4`) |
-| Last commit | `96b62ac` Detect spikes across the whole recording and show them as a raster |
+| Last commit | `ec903d7` Dark theme: dark plots with faint grids, µV/mV axes, one font policy |
 | Tests | 109 passing: `tdtgui/bin/python -m unittest discover tests` |
 | Next step | User tests UI-1 (dark theme); then UI-2: plot header + left card + status bar → toast (§4) |
 
@@ -38,7 +38,7 @@ delete details that the code or git history already records.
    - Detect Spikes runs over the whole recording, with σ frozen from the view.
    - It uses the shared chunk pipeline `core.export.iter_processed_chunks`, and the results feed the Raster tab.
    - Channel filtering is parallelised.
-10. UI-1:
+10. (`ec903d7`) UI-1:
     - Dark theme (`ui/theme.py`) on all plots: faint grid, no axis box, monospace ticks.
     - µV/mV axes, done by scaling tick labels only.
     - One font policy, text roles in place of inline styles, accent-filled primary buttons.
