@@ -12,7 +12,7 @@ delete details that the code or git history already records.
 |---|---|
 | Active branch | `NSP_Basic` (not pushed; branched from `main` @ `beb2da4`) |
 | Last commit | `7aa02ad` Plot header with title and chips, compact recording card, toasts, shortcuts |
-| Tests | 111 passing: `tdtgui/bin/python -m unittest discover tests` |
+| Tests | 110 passing: `tdtgui/bin/python -m unittest discover tests` |
 | Next step | User tests UI-2; then pick from "Later" (§4) |
 
 ### Done
@@ -48,8 +48,9 @@ delete details that the code or git history already records.
 12. (`7aa02ad`) UI-2:
     - A Time Series header: the title (`Elec 10 · Ch 125 · elec1-10` / `N electrodes`), blanking/filter chips (amber
       when stale or bypassed) and an RMS chip, replacing the corner TextItem.
-    - The left panel is now a compact recording card (`StreamPanel`): middle-elided name, the stream list only when
-      there are 2+ streams, and View → Show Recording Panel (⌘1).
+    - The left panel can be hidden with View → Show Recording Panel (⌘1). A compact "recording card" was tried; the user
+      asked for the original Block Info + Streams table layout back, restyled: middle-elided name, secondary details,
+      monospace right-aligned numbers, and a minimum width of 225 px so the column headers fit.
     - The status bar is removed; messages go to a `Toast` (`ui/toast.py`).
     - Empty-state hints, keyboard shortcuts, and control tabs wrapped in scroll areas so they never squash at
       1200×800.
@@ -99,7 +100,7 @@ ui/main_window.py     layout, signal wiring, plot buffering, detection/progress 
 ui/analog_plot.py     analog plot: draggable onset/offset lines, event highlight
 ui/analog_panel.py    Analog Ch. panel + AssignChannelDialog + AnalogListDialog
 ui/blanking_panel.py  Blanking tab: one ModalityBlankingPage (Basic | Advanced) per modality with events
-ui/stream_panel.py    left recording card;  ui/toast.py  transient messages;  ui/theme.py  tokens, QSS, plot styling
+ui/stream_panel.py    left Block Info + Streams;  ui/toast.py  transient messages;  ui/theme.py  tokens, QSS, plot styling
 tests/                unittest; test_blackrock.py has write_nsx_23() to build synthetic .nsX files
 ```
 

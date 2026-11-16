@@ -203,6 +203,8 @@ class TimeSeriesPlot(QWidget):
             self._chips.append(label)
         for label, (text, tooltip, warning) in zip(self._chips, chips):
             label.set_full_text(text)
+            # short chips stay whole; long ones (filter chains) elide down to ~130 px
+            label.setMinimumWidth(min(label.fontMetrics().horizontalAdvance(text) + 22, 130))
             label.setToolTip(f"{text}\n{tooltip}")
             theme.set_role(label, "chip-warning" if warning else "chip")
             label.show()

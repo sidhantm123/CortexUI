@@ -173,10 +173,10 @@ class MainWindow(QMainWindow):
         # Main splitter
         self._main_splitter = QSplitter(Qt.Orientation.Horizontal)
 
-        # Left panel: compact recording card (View → Show Recording Panel, or drag it shut)
+        # Left panel: block info and streams (View → Show Recording Panel, or drag it shut)
         self._stream_panel = StreamPanel()
-        self._stream_panel.setMaximumWidth(260)
-        self._stream_panel.setMinimumWidth(150)
+        self._stream_panel.setMaximumWidth(280)
+        self._stream_panel.setMinimumWidth(225)  # Stream / Channels / Rate (Hz) headers fit
         self._main_splitter.addWidget(self._stream_panel)
 
         # Center: Plots
@@ -261,7 +261,7 @@ class MainWindow(QMainWindow):
         self._main_splitter.addWidget(right_widget)
 
         # Set splitter sizes
-        self._main_splitter.setSizes([190, 710, 340])
+        self._main_splitter.setSizes([230, 670, 340])
         self._main_splitter.splitterMoved.connect(self._on_main_splitter_moved)
 
         main_layout.addWidget(self._main_splitter)
@@ -393,7 +393,7 @@ class MainWindow(QMainWindow):
         self._stream_panel.setVisible(visible)
         if visible and self._main_splitter.sizes()[0] == 0:  # was dragged shut
             sizes = self._main_splitter.sizes()
-            sizes[0], sizes[1] = 190, max(200, sizes[1] - 190)
+            sizes[0], sizes[1] = 230, max(200, sizes[1] - 230)
             self._main_splitter.setSizes(sizes)
         self._settings.setValue("show_recording_panel", visible)
 
@@ -603,7 +603,6 @@ class MainWindow(QMainWindow):
                 self._on_stream_selected(first_stream)
 
             self._reset_analog_view()
-            self._update_recording_card()
             self._time_plot.set_empty(False)
 
         except Exception as e:
@@ -1080,7 +1079,6 @@ class MainWindow(QMainWindow):
             self._last_plot_channels = []
             self._buffer_channels = []
             self._refresh_plot()
-        self._update_recording_card()
         self._app_state.mark_blanking_stale()  # electrode set changed
         self._on_spike_inputs_changed()
         self._blanking_panel.update_status()
@@ -1558,12 +1556,6 @@ class MainWindow(QMainWindow):
         self._worker_manager.thread_pool.start(worker)
         progress.show()
 
-    def _update_recording_card(self):
-        """Recording card details (analog counts follow the user's analog-list edits)."""
-        self._stream_panel.set_analog_counts(
-            {name: len(st.analog_channels) for name, st in self._app_state.stream_states.items()}
-        )
-
     def _on_save_session(self):
         """Save current session to file."""
         if self._app_state.block is None:
@@ -1617,7 +1609,6 @@ class MainWindow(QMainWindow):
                     self._probe_map.set_probe(self._app_state.probe)
                     self._filter_panel.set_probe(self._app_state.probe)
 
-                self._update_recording_card()
                 self._time_plot.set_empty(self._app_state.block is None)
                 self._toast.show_message(f"Session loaded from {filepath}")
                 if self._app_state.load_messages:

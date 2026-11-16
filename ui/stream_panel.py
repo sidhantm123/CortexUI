@@ -1,22 +1,25 @@
-"""Recording card: block name and details, plus a stream list when there is more than one stream."""
-from typing import Dict, Optional
+"""Stream list panel widget."""
+from typing import Optional
 
 from PySide6.QtCore import Signal, Qt
 from PySide6.QtWidgets import (
     QWidget,
     QVBoxLayout,
     QLabel,
-    QListWidget,
-    QListWidgetItem,
+    QTreeWidget,
+    QTreeWidgetItem,
+    QGroupBox,
+    QHeaderView,
 )
 
-from models.recording import RecordingBlock, StreamInfo
-from .theme import ElidedLabel, set_role
+from models.recording import RecordingBlock
+from .theme import ElidedLabel, set_role, mono_font, SIZE_BODY
 
-SOURCE_NAMES = {"tdt": "TDT", "blackrock": "Blackrock"}
+NO_BLOCK_HINT = "Open a folder (⌘O / Ctrl+O)\nor drop one on the window"
 
 
 def format_duration(seconds: float) -> str:
+    """Duration in human-readable form, e.g. '16 min 6.6 s'."""
     if seconds < 60:
         return f"{seconds:.1f} s"
     if seconds < 3600:
@@ -24,138 +27,116 @@ def format_duration(seconds: float) -> str:
     return f"{int(seconds // 3600)} h {int(seconds % 3600 // 60)} min {seconds % 60:.0f} s"
 
 
-def format_rate(hz: float) -> str:
-    return f"{hz / 1000:g} kHz" if hz >= 1000 else f"{hz:g} Hz"
-
-
-def stream_summary(info: StreamInfo, n_analog: Optional[int] = None) -> str:
-    """'ns5 · 136 ch (128 + 8 analog) · 30 kHz'."""
-    if n_analog is None:
-        n_analog = len(info.analog_channels)
-    channels = f"{info.num_channels} ch"
-    if n_analog:
-        channels += f" ({info.num_channels - n_analog} + {n_analog} analog)"
-    return f"{info.name} · {channels} · {format_rate(info.sample_rate)}"
-
-
 class StreamPanel(QWidget):
     """
-    Compact recording card (left panel).
+    Panel showing available streams in the loaded recording.
 
-    Shows the block name (middle-elided), duration and format, and the current stream's
-    channels and rate. The stream list only appears when the recording has several streams.
+    Displays:
+    - Block name (middle-elided; full name in the tooltip) and info
+    - Tree of streams with channel counts and sample rates
     """
 
+    # Signals
     stream_selected = Signal(str)  # stream name
 
     def __init__(self, parent=None):
         super().__init__(parent)
         self._block: Optional[RecordingBlock] = None
-        self._analog_counts: Dict[str, int] = {}  # current analog-list sizes (the user can edit them)
         self._setup_ui()
 
     def _setup_ui(self):
+        """Set up the widget layout."""
         layout = QVBoxLayout(self)
-        layout.setContentsMargins(10, 8, 6, 8)
-        layout.setSpacing(4)
+        layout.setContentsMargins(5, 5, 5, 5)
 
-        self._name_label = ElidedLabel("No recording")
-        set_role(self._name_label, "heading")
-        layout.addWidget(self._name_label)
+        # Block info group
+        block_group = QGroupBox("Block Info")
+        block_layout = QVBoxLayout(block_group)
+        block_layout.setContentsMargins(6, 6, 0, 0)
+        block_layout.setSpacing(4)
 
-        self._detail_label = QLabel("Open a folder (⌘O / Ctrl+O)\nor drop one on the window")
-        self._detail_label.setWordWrap(True)
-        set_role(self._detail_label, "secondary")
-        layout.addWidget(self._detail_label)
+        self._block_name_label = ElidedLabel("No block loaded")
+        set_role(self._block_name_label, "heading")
+        block_layout.addWidget(self._block_name_label)
 
-        self._streams_title = QLabel("Streams")
-        set_role(self._streams_title, "secondary")
-        layout.addSpacing(8)
-        layout.addWidget(self._streams_title)
+        self._duration_label = QLabel(NO_BLOCK_HINT)
+        set_role(self._duration_label, "secondary")
+        block_layout.addWidget(self._duration_label)
 
-        self._streams_list = QListWidget()
-        self._streams_list.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
-        self._streams_list.currentItemChanged.connect(self._on_current_changed)
-        layout.addWidget(self._streams_list)
+        layout.addWidget(block_group)
 
+        # Streams tree
+        streams_group = QGroupBox("Streams")
+        streams_layout = QVBoxLayout(streams_group)
+        streams_layout.setContentsMargins(6, 6, 0, 0)
+
+        self._streams_tree = QTreeWidget()
+        self._streams_tree.setHeaderLabels(["Stream", "Channels", "Rate (Hz)"])
+        self._streams_tree.setRootIsDecorated(False)
+        header = self._streams_tree.header()
+        header.setStretchLastSection(False)
+        header.setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
+        header.setMinimumSectionSize(40)
+        header.setSectionResizeMode(1, QHeaderView.ResizeMode.ResizeToContents)
+        header.setSectionResizeMode(2, QHeaderView.ResizeMode.ResizeToContents)
+        self._streams_tree.itemClicked.connect(self._on_item_clicked)
+        streams_layout.addWidget(self._streams_tree)
+
+        layout.addWidget(streams_group)
         layout.addStretch()
-        self._set_streams_visible(False)
-
-    def _set_streams_visible(self, visible: bool):
-        self._streams_title.setVisible(visible)
-        self._streams_list.setVisible(visible)
 
     def set_block(self, block: RecordingBlock):
-        """Show a loaded recording."""
+        """Set the recording to display."""
         self._block = block
-        self._analog_counts = {}
-        self._name_label.set_full_text(block.name)
 
-        self._streams_list.blockSignals(True)
-        self._streams_list.clear()
+        # Update block info
+        self._block_name_label.set_full_text(block.name)
+        self._block_name_label.setToolTip(f"{block.name}\n{block.path}")
+        self._duration_label.setText(
+            f"Duration: {format_duration(block.duration)}\n"
+            f"Streams: {len(block.streams)}"
+        )
+
+        # Populate streams tree
+        self._streams_tree.clear()
+        numbers = mono_font(SIZE_BODY)
+        right = Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter
         for name, info in sorted(block.streams.items()):
-            item = QListWidgetItem()
-            item.setData(Qt.ItemDataRole.UserRole, name)
-            self._streams_list.addItem(item)
-        if self._streams_list.count():
-            self._streams_list.setCurrentRow(0)
-        self._streams_list.blockSignals(False)
+            item = QTreeWidgetItem([name, str(info.num_channels), f"{info.sample_rate:.0f}"])
+            item.setData(0, Qt.ItemDataRole.UserRole, name)
+            for col in (1, 2):
+                item.setFont(col, numbers)
+                item.setTextAlignment(col, right)
+            self._streams_tree.addTopLevelItem(item)
 
-        self._update_details()
-        rows = self._streams_list.count()
-        row_h = self._streams_list.sizeHintForRow(0) if rows else 0
-        self._streams_list.setFixedHeight(rows * row_h + 2 * self._streams_list.frameWidth() + 2)
-        self._set_streams_visible(rows > 1)
+        # Select first stream
+        if self._streams_tree.topLevelItemCount() > 0:
+            self._streams_tree.setCurrentItem(self._streams_tree.topLevelItem(0))
 
-    def set_analog_counts(self, counts: Dict[str, int]):
-        """Number of analog inputs per stream, after the user edits an analog list."""
-        self._analog_counts = dict(counts)
-        self._update_details()
-
-    def _summary(self, name: str) -> str:
-        return stream_summary(self._block.streams[name], self._analog_counts.get(name))
-
-    def _update_details(self):
-        block = self._block
-        if block is None:
-            return
-        for i in range(self._streams_list.count()):
-            item = self._streams_list.item(i)
-            item.setText(self._summary(item.data(Qt.ItemDataRole.UserRole)))
-            item.setToolTip(item.text())
-        lines = [f"{format_duration(block.duration)} · {SOURCE_NAMES.get(block.source, block.source)}"]
-        current = self.get_selected_stream()
-        if current in block.streams:
-            lines.append(self._summary(current))
-        self._detail_label.setText("\n".join(lines))
-        self._detail_label.setToolTip(f"{block.path}\n" + "\n".join(lines))
-
-    def _on_current_changed(self, item: Optional[QListWidgetItem], _previous):
-        if item is None:
-            return
-        self._update_details()
-        stream_name = item.data(Qt.ItemDataRole.UserRole)
+    def _on_item_clicked(self, item: QTreeWidgetItem, column: int):
+        """Handle stream item click."""
+        stream_name = item.data(0, Qt.ItemDataRole.UserRole)
         if stream_name:
             self.stream_selected.emit(stream_name)
 
     def select_stream(self, stream_name: str):
-        """Programmatically select a stream (no signal)."""
-        for i in range(self._streams_list.count()):
-            if self._streams_list.item(i).data(Qt.ItemDataRole.UserRole) == stream_name:
-                self._streams_list.blockSignals(True)
-                self._streams_list.setCurrentRow(i)
-                self._streams_list.blockSignals(False)
+        """Programmatically select a stream."""
+        for i in range(self._streams_tree.topLevelItemCount()):
+            item = self._streams_tree.topLevelItem(i)
+            if item.data(0, Qt.ItemDataRole.UserRole) == stream_name:
+                self._streams_tree.setCurrentItem(item)
                 break
-        self._update_details()
 
     def get_selected_stream(self) -> Optional[str]:
-        item = self._streams_list.currentItem()
-        return item.data(Qt.ItemDataRole.UserRole) if item else None
+        """Get currently selected stream name."""
+        item = self._streams_tree.currentItem()
+        if item:
+            return item.data(0, Qt.ItemDataRole.UserRole)
+        return None
 
     def clear(self):
+        """Clear the panel."""
         self._block = None
-        self._name_label.set_full_text("No recording")
-        self._detail_label.setText("Open a folder (⌘O / Ctrl+O)\nor drop one on the window")
-        self._detail_label.setToolTip("")
-        self._streams_list.clear()
-        self._set_streams_visible(False)
+        self._block_name_label.set_full_text("No block loaded")
+        self._duration_label.setText(NO_BLOCK_HINT)
+        self._streams_tree.clear()
