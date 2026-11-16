@@ -11,7 +11,7 @@ delete details that the code or git history already records.
 | | |
 |---|---|
 | Active branch | `NSP_Basic` (not pushed; branched from `main` @ `beb2da4`) |
-| Last commit | UI-2: plot header, recording card, toasts, shortcuts (see `git log`) |
+| Last commit | `7aa02ad` Plot header with title and chips, compact recording card, toasts, shortcuts |
 | Tests | 111 passing: `tdtgui/bin/python -m unittest discover tests` |
 | Next step | User tests UI-2; then pick from "Later" (§4) |
 
@@ -45,7 +45,7 @@ delete details that the code or git history already records.
 11. (`9c7f5fc`) Accent changed to `#CC79A7` (user), with dark text on accent fills for contrast. Thin 4 px progress bars
     via `theme.progress_dialog`, with the percentage in the dialog text. Analog "Sync to Raw Data Viewer" renamed
     "Sync X-axes".
-12. UI-2:
+12. (`7aa02ad`) UI-2:
     - A Time Series header: the title (`Elec 10 · Ch 125 · elec1-10` / `N electrodes`), blanking/filter chips (amber
       when stale or bypassed) and an RMS chip, replacing the corner TextItem.
     - The left panel is now a compact recording card (`StreamPanel`): middle-elided name, the stream list only when
