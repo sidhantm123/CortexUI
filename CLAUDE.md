@@ -11,7 +11,7 @@ delete details that the code or git history already records.
 | | |
 |---|---|
 | Active branch | `NSP_Basic` (not pushed; branched from `main` @ `beb2da4`) |
-| Last commit | `7aa02ad` Plot header with title and chips, compact recording card, toasts, shortcuts |
+| Last commit | `55b8b60` Restore the Block Info + Streams left panel layout in the new style |
 | Tests | 110 passing: `tdtgui/bin/python -m unittest discover tests` |
 | Next step | User tests UI-2; then pick from "Later" (§4) |
 
