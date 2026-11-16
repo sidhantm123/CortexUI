@@ -216,8 +216,9 @@ class AnalogPanel(QWidget):
         layout = QVBoxLayout(self)
         layout.setContentsMargins(5, 5, 5, 5)
 
-        self._sync_check = QCheckBox("Sync to Raw Data Viewer")
+        self._sync_check = QCheckBox("Sync X-axes")
         self._sync_check.setChecked(True)
+        self._sync_check.setToolTip("Keep this plot's time axis linked to the main plot")
         self._sync_check.toggled.connect(self.sync_changed.emit)
         layout.addWidget(self._sync_check)
 

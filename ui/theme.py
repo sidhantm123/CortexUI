@@ -8,8 +8,9 @@ import os
 import sys
 from typing import Optional
 
+from PySide6.QtCore import Qt
 from PySide6.QtGui import QColor, QFont, QFontDatabase, QPalette
-from PySide6.QtWidgets import QApplication, QWidget
+from PySide6.QtWidgets import QApplication, QProgressBar, QProgressDialog, QWidget
 
 # ---------------------------------------------------------------- colours
 WINDOW = "#16171A"
@@ -20,8 +21,9 @@ BORDER = "#2E3036"
 TEXT = "#E6E7EA"
 TEXT_SECONDARY = "#9A9DA5"
 TEXT_DISABLED = "#5C5F66"
-ACCENT = "#4C8DFF"
-ACCENT_HOVER = "#6A9FFF"
+ACCENT = "#CC79A7"  # reddish purple (Okabe-Ito)
+ACCENT_HOVER = "#D891B8"
+ACCENT_TEXT = "#16171A"  # text on accent fills (dark reads better than white on this accent)
 WARNING = "#E0A040"
 ERROR = "#E5534B"
 SUCCESS = "#3FB950"
@@ -46,6 +48,7 @@ ANALOG_TRACE = "#C9CCD3"
 THRESHOLD = "#FF6B6B"
 BLANK_SHADE = (255, 255, 255, 22)  # blanked spans on the neural plot
 HIGHLIGHT_SHADE = (255, 200, 0, 40)  # selected event on the analog plot
+SELECTION_SHADE = (204, 121, 167, 45)  # FFT interval selection (accent)
 
 # ---------------------------------------------------------------- typography
 SIZE_BODY = 13
@@ -115,7 +118,7 @@ def _palette() -> QPalette:
         QPalette.ColorRole.Button: RAISED,
         QPalette.ColorRole.ButtonText: TEXT,
         QPalette.ColorRole.Highlight: ACCENT,
-        QPalette.ColorRole.HighlightedText: "#FFFFFF",
+        QPalette.ColorRole.HighlightedText: ACCENT_TEXT,
         QPalette.ColorRole.ToolTipBase: RAISED,
         QPalette.ColorRole.ToolTipText: TEXT,
         QPalette.ColorRole.Link: ACCENT,
@@ -167,7 +170,7 @@ def _stylesheet() -> str:
     QPushButton:hover {{ background: {RAISED_HOVER}; }}
     QPushButton:pressed {{ background: {BORDER}; }}
     QPushButton:disabled {{ color: {TEXT_DISABLED}; background: {SURFACE}; }}
-    QPushButton[primary="true"] {{ background: {ACCENT}; color: #FFFFFF; border: none; font-weight: 600; }}
+    QPushButton[primary="true"] {{ background: {ACCENT}; color: {ACCENT_TEXT}; border: none; font-weight: 600; }}
     QPushButton[primary="true"]:hover {{ background: {ACCENT_HOVER}; }}
     QPushButton[primary="true"]:disabled {{ background: {RAISED}; color: {TEXT_DISABLED}; }}
 
@@ -179,7 +182,12 @@ def _stylesheet() -> str:
     QListView, QTreeView {{ background: {SURFACE}; border: 1px solid {BORDER}; }}
     QSplitter::handle {{ background: {WINDOW}; }}
     QMenu {{ background: {RAISED}; border: 1px solid {BORDER}; }}
-    QMenu::item:selected {{ background: {ACCENT}; color: #FFFFFF; }}
+    QMenu::item:selected {{ background: {ACCENT}; color: {ACCENT_TEXT}; }}
+
+    /* Thin progress bars (the percentage is shown in the dialog text instead) */
+    QProgressBar {{ background: {RAISED}; border: none; border-radius: 2px;
+                    min-height: 4px; max-height: 4px; }}
+    QProgressBar::chunk {{ background: {ACCENT}; border-radius: 2px; }}
 
     /* Check boxes and radio buttons: visible outline on dark, accent when on */
     QCheckBox::indicator, QRadioButton::indicator {{ width: 13px; height: 13px;
@@ -218,6 +226,25 @@ def set_role(widget: QWidget, role: str):
     widget.setProperty("role", role)
     widget.style().unpolish(widget)
     widget.style().polish(widget)
+
+
+def progress_dialog(text: str, parent: QWidget, cancellable: bool = True,
+                    maximum: int = 100) -> QProgressDialog:
+    """
+    Window-modal progress dialog with a thin bar; the percentage is appended to the text.
+    maximum=0 gives a busy indicator.
+    """
+    dialog = QProgressDialog(text, "Cancel" if cancellable else None, 0, maximum, parent)
+    bar = QProgressBar(dialog)
+    bar.setTextVisible(False)
+    dialog.setBar(bar)
+    dialog.setRange(0, maximum)
+    dialog.setWindowModality(Qt.WindowModality.WindowModal)
+    dialog.setMinimumDuration(0)
+    dialog.setMinimumWidth(380)
+    if maximum:
+        bar.valueChanged.connect(lambda v: v >= 0 and dialog.setLabelText(f"{text}  {v}%"))
+    return dialog
 
 
 def set_primary(button: QWidget, primary: bool = True):

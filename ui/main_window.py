@@ -17,7 +17,6 @@ from PySide6.QtWidgets import (
     QMenu,
     QFileDialog,
     QMessageBox,
-    QProgressDialog,
     QLabel,
     QApplication,
     QDialog,
@@ -57,7 +56,7 @@ from .blanking_panel import BlankingPanel
 from .spike_panel import SpikePanel
 from .raster_plot import RasterPlot
 from .plot_widget import format_volts
-from .theme import set_role, set_primary
+from .theme import set_role, set_primary, progress_dialog
 
 
 def _placeholder_tab(text: str) -> QWidget:
@@ -441,8 +440,7 @@ class MainWindow(QMainWindow):
     def _load_block(self, folder_path: str):
         """Load a TDT or Blackrock recording from folder."""
         # Show progress
-        progress = QProgressDialog("Loading recording...", None, 0, 0, self)
-        progress.setWindowModality(Qt.WindowModality.WindowModal)
+        progress = progress_dialog("Loading recording...", self, cancellable=False, maximum=0)
         progress.show()
         QApplication.processEvents()
 
@@ -604,8 +602,7 @@ class MainWindow(QMainWindow):
             return
 
         # Show progress
-        progress = QProgressDialog("Computing spectrum...", "Cancel", 0, 100, self)
-        progress.setWindowModality(Qt.WindowModality.WindowModal)
+        progress = progress_dialog("Computing spectrum...", self)
         progress.show()
 
         try:
@@ -1157,9 +1154,7 @@ class MainWindow(QMainWindow):
             ("Filters: " + ", ".join(f.get_display_name() for f in active_filters)) if active_filters else "",
         ])) or "raw (no blanking, no filters)"
 
-        progress = QProgressDialog("Detecting spikes across the recording...", "Cancel", 0, 100, self)
-        progress.setWindowModality(Qt.WindowModality.WindowModal)
-        progress.setMinimumDuration(0)
+        progress = progress_dialog("Detecting spikes across the recording...", self)
 
         worker = SpikeDetectWorker(
             self._app_state.reader, state.stream_name, state.ordered_neural_channels(),
@@ -1268,11 +1263,7 @@ class MainWindow(QMainWindow):
             QMessageBox.information(self, "No Trials", "Tick at least one trial to blank.")
             return
 
-        progress = QProgressDialog(
-            f"Measuring baseline noise and artifact recovery ({modality})...", "Cancel", 0, 100, self
-        )
-        progress.setWindowModality(Qt.WindowModality.WindowModal)
-        progress.setMinimumDuration(0)
+        progress = progress_dialog(f"Measuring baseline noise and artifact recovery ({modality})...", self)
 
         worker = BlankingWorker(
             self._app_state.reader, state.stream_name, state.sample_rate, state.duration,
@@ -1352,9 +1343,7 @@ class MainWindow(QMainWindow):
             for a in assignments
         }
 
-        progress = QProgressDialog("Reading analog channels and detecting events...", "Cancel", 0, 100, self)
-        progress.setWindowModality(Qt.WindowModality.WindowModal)
-        progress.setMinimumDuration(0)
+        progress = progress_dialog("Reading analog channels and detecting events...", self)
 
         worker = EventDetectWorker(self._app_state.reader, assignments, stream_info, labels)
         worker.signals.progress.connect(progress.setValue)
@@ -1584,9 +1573,7 @@ class MainWindow(QMainWindow):
         i_start = max(0, int(round(t1 * fs)))
         i_stop = min(n_stream, max(i_start + 1, int(round(t2 * fs))))
 
-        progress = QProgressDialog("Exporting...", "Cancel", 0, 100, self)
-        progress.setWindowModality(Qt.WindowModality.WindowModal)
-        progress.setMinimumDuration(0)
+        progress = progress_dialog("Exporting...", self)
 
         worker = ExportWorker(
             reader=self._app_state.reader,

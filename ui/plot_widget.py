@@ -376,7 +376,7 @@ class TimeSeriesPlot(QWidget):
 
                     self._selection_region = pg.LinearRegionItem(
                         values=[mid - span / 2, mid + span / 2],
-                        brush=pg.mkBrush(76, 141, 255, 45),
+                        brush=pg.mkBrush(*theme.SELECTION_SHADE),
                     )
                     self._selection_region.sigRegionChangeFinished.connect(
                         self._on_region_changed
