@@ -57,6 +57,7 @@ from .blanking_panel import BlankingPanel
 from .spike_panel import SpikePanel
 from .raster_plot import RasterPlot
 from .plot_widget import format_volts
+from .theme import set_role, set_primary
 
 
 def _placeholder_tab(text: str) -> QWidget:
@@ -65,7 +66,7 @@ def _placeholder_tab(text: str) -> QWidget:
     layout = QVBoxLayout(widget)
     label = QLabel(text)
     label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-    label.setStyleSheet("color: gray;")
+    set_role(label, "secondary")
     layout.addWidget(label)
     return widget
 

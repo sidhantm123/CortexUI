@@ -16,6 +16,7 @@ from PySide6.QtWidgets import (
 
 from models import StreamState
 from dsp.spikes import NEGATIVE, POSITIVE, BOTH
+from .theme import set_role, set_primary
 
 
 class SpikePanel(QWidget):
@@ -75,7 +76,7 @@ class SpikePanel(QWidget):
 
         self._hint_label = QLabel("")
         self._hint_label.setWordWrap(True)
-        self._hint_label.setStyleSheet("color: #b35900; font-size: 11px;")
+        set_role(self._hint_label, "warning")
         layout.addWidget(self._hint_label)
 
         self._detect_btn = QPushButton("Detect Spikes (whole recording)")
@@ -84,11 +85,12 @@ class SpikePanel(QWidget):
             "across the whole recording (with the current blanking and filters)."
         )
         self._detect_btn.clicked.connect(self.detect_requested.emit)
+        set_primary(self._detect_btn)
         layout.addWidget(self._detect_btn)
 
         self._summary_label = QLabel("")
         self._summary_label.setWordWrap(True)
-        self._summary_label.setStyleSheet("font-size: 11px;")
+        set_role(self._summary_label, "secondary")
         layout.addWidget(self._summary_label)
 
         layout.addStretch()
@@ -119,9 +121,7 @@ class SpikePanel(QWidget):
             text += "\nOut of date (blanking, filters or threshold changed) — Detect again."
         self._summary_label.setText(text)
         self._summary_label.setToolTip(tooltip)
-        self._summary_label.setStyleSheet(
-            f"font-size: 11px; color: {'#c0392b' if stale else '#1e7d32'};"
-        )
+        set_role(self._summary_label, "error" if stale else "success")
 
     def _on_changed(self, *_):
         if self._loading or self._state is None:

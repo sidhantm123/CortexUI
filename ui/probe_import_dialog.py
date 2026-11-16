@@ -20,6 +20,7 @@ from PySide6.QtWidgets import (
 )
 
 from models.probe import ProbeContact, ProbeGeometry
+from .theme import set_role, set_primary
 
 
 # ── helpers ───────────────────────────────────────────────────────────────────
@@ -194,7 +195,7 @@ class ProbeImportDialog(QDialog):
 
         # Status label
         self._status = QLabel("")
-        self._status.setStyleSheet("color: gray; font-size: 11px;")
+        set_role(self._status, "secondary")
         layout.addWidget(self._status)
 
         # Buttons
@@ -226,7 +227,7 @@ class ProbeImportDialog(QDialog):
 
         # Info label
         self._json_info = QLabel("")
-        self._json_info.setStyleSheet("font-size: 11px; color: #444;")
+        set_role(self._json_info, "secondary")
         layout.addWidget(self._json_info)
 
         # Preview table
@@ -262,7 +263,7 @@ class ProbeImportDialog(QDialog):
 
         # Hint
         hint = QLabel("Ch is 1-indexed (Ch 1 = TDT channel 0 internally).")
-        hint.setStyleSheet("color: gray; font-size: 10px;")
+        set_role(hint, "secondary")
         layout.addWidget(hint)
 
         return tab

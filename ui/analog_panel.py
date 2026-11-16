@@ -28,6 +28,7 @@ from PySide6.QtWidgets import (
 
 from core.app_state import AppState
 from models.analog import AnalogAssignment, DetectionSettings, MODALITY_PRESETS, StimEvent
+from .theme import set_role, set_primary
 
 NONE_ITEM = "(none)"
 NEW_ITEM = "New type…"
@@ -231,7 +232,7 @@ class AnalogPanel(QWidget):
         grid.addWidget(self._assign_btn, 0, 2)
 
         self._channel_label = QLabel("")
-        self._channel_label.setStyleSheet("color: gray; font-size: 11px;")
+        set_role(self._channel_label, "secondary")
         grid.addWidget(self._channel_label, 1, 0, 1, 2)
         self._edit_list_btn = QPushButton("Edit List…")
         self._edit_list_btn.setToolTip("Choose which channels of this stream are analog inputs")
@@ -246,10 +247,11 @@ class AnalogPanel(QWidget):
         self._detect_btn = QPushButton("Detect Events")
         self._detect_btn.setToolTip("Find events on every assigned channel")
         self._detect_btn.clicked.connect(self.detect_requested.emit)
+        set_primary(self._detect_btn)
         grid.addWidget(self._detect_btn, 2, 2)
 
         self._event_label = QLabel("")
-        self._event_label.setStyleSheet("color: gray; font-size: 11px;")
+        set_role(self._event_label, "secondary")
         grid.addWidget(self._event_label, 3, 0, 1, 3)
         layout.addLayout(grid)
 
@@ -272,12 +274,12 @@ class AnalogPanel(QWidget):
 
         self._edit_msg_label = QLabel("")
         self._edit_msg_label.setWordWrap(True)
-        self._edit_msg_label.setStyleSheet("color: #c0392b; font-size: 11px;")
+        set_role(self._edit_msg_label, "error")
         layout.addWidget(self._edit_msg_label)
 
         self._summary_label = QLabel("")
         self._summary_label.setWordWrap(True)
-        self._summary_label.setStyleSheet("color: gray; font-size: 11px;")
+        set_role(self._summary_label, "secondary")
         layout.addWidget(self._summary_label)
 
     # ---------------------------------------------------------------- state

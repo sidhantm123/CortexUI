@@ -58,17 +58,16 @@ def main():
     app.setApplicationName("Multi-Channel Neural Viewer")
     app.setOrganizationName("TDT Viewer")
     app.setApplicationVersion("1.0.0")
-    app.setStyle("Fusion")
+    # Dark theme (palette, stylesheet, fonts) — applied once
+    from ui.theme import apply_theme, ui_font, WINDOW, TEXT
+    apply_theme(app)
 
     # Show a splash screen while pyqtgraph (slow ~4s import) loads
     splash_pix = QPixmap(420, 120)
-    splash_pix.fill(QColor("#1e1e2e"))
+    splash_pix.fill(QColor(WINDOW))
     painter = QPainter(splash_pix)
-    painter.setPen(QColor("#cdd6f4"))
-    font = QFont()
-    font.setPointSize(16)
-    font.setBold(True)
-    painter.setFont(font)
+    painter.setPen(QColor(TEXT))
+    painter.setFont(ui_font(15, semibold=True))
     painter.drawText(splash_pix.rect(), Qt.AlignmentFlag.AlignCenter, "Multi-Channel Neural Viewer\nLoading…")
     painter.end()
 

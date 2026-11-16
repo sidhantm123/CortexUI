@@ -21,6 +21,7 @@ from PySide6.QtWidgets import (
 )
 
 from models import StreamState, ChannelMode
+from .theme import set_role, set_primary
 
 
 class NumberSpinBox(QSpinBox):
@@ -80,7 +81,6 @@ class ControlPanel(QWidget):
 
         # Stream info
         self._stream_info_label = QLabel("No stream selected")
-        self._stream_info_label.setStyleSheet("font-weight: bold;")
         layout.addWidget(self._stream_info_label)
 
         # Channel mode group
@@ -113,7 +113,7 @@ class ControlPanel(QWidget):
         self._channel_spin.valueChanged.connect(self._on_single_channel_changed)
         single_layout.addWidget(self._channel_spin)
         self._channel_name = QLabel("")
-        self._channel_name.setStyleSheet("color: gray; font-size: 11px;")
+        set_role(self._channel_name, "secondary")
         single_layout.addWidget(self._channel_name)
         single_layout.addStretch()
 

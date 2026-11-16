@@ -7,6 +7,8 @@ from PySide6.QtCore import Qt
 from PySide6.QtWidgets import QLabel, QVBoxLayout, QWidget
 
 from models.probe import ProbeGeometry
+from . import theme
+from .theme import set_role, set_primary
 
 
 class ProbeMapWidget(QWidget):
@@ -41,16 +43,15 @@ class ProbeMapWidget(QWidget):
         # Placeholder shown when no probe is loaded
         self._placeholder = QLabel("No probe loaded\n(File › Load Probe...)")
         self._placeholder.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self._placeholder.setStyleSheet("color: gray; font-size: 11px;")
+        set_role(self._placeholder, "secondary")
         layout.addWidget(self._placeholder)
 
         # pyqtgraph plot (hidden until a probe is loaded)
         self._plot_widget = pg.PlotWidget()
-        self._plot_widget.setBackground("w")
         self._plot_widget.setAspectLocked(True)
-        self._plot_widget.setLabel("bottom", "X (µm)")
-        self._plot_widget.setLabel("left", "Y (µm)")
-        self._plot_widget.showGrid(x=True, y=True, alpha=0.2)
+        theme.style_plot(self._plot_widget.getPlotItem(), self._plot_widget)
+        theme.axis_label(self._plot_widget.getPlotItem(), "bottom", "X (µm)")
+        theme.axis_label(self._plot_widget.getPlotItem(), "left", "Y (µm)")
         self._plot_widget.setVisible(False)
         layout.addWidget(self._plot_widget)
 

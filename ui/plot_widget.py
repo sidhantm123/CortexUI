@@ -8,6 +8,8 @@ from PySide6.QtGui import QColor
 
 import pyqtgraph as pg
 
+from . import theme
+
 # Configure pyqtgraph for performance
 pg.setConfigOptions(
     antialias=False,  # Faster rendering
@@ -82,17 +84,8 @@ def format_volts(v: float) -> str:
 # Most blanked spans shaded at once (only spans in view are passed in)
 MAX_BLANK_SPANS = 300
 
-# Color palette for multi-channel overlay
-CHANNEL_COLORS = [
-    "#1f77b4",  # Blue
-    "#ff7f0e",  # Orange
-    "#2ca02c",  # Green
-    "#d62728",  # Red
-    "#9467bd",  # Purple
-    "#8c564b",  # Brown
-    "#e377c2",  # Pink
-    "#7f7f7f",  # Gray
-]
+# Trace colours (tuned for the dark plot background)
+CHANNEL_COLORS = theme.TRACE_COLORS
 
 
 class TimeSeriesPlot(QWidget):
@@ -144,7 +137,7 @@ class TimeSeriesPlot(QWidget):
         self._vrms_text = pg.TextItem("", anchor=(1, 0))
         self._vrms_text.setParentItem(vb)
         self._vrms_text.setAcceptedMouseButtons(Qt.MouseButton.NoButton)
-        self._vrms_text.setToolTip("Vrms of the visible data, blanked samples excluded")
+        self._vrms_text.setToolTip("RMS of the visible data, blanked samples excluded")
         vb.sigResized.connect(self._place_vrms_text)
         self._place_vrms_text()
 
@@ -155,16 +148,16 @@ class TimeSeriesPlot(QWidget):
 
         # Create graphics layout widget
         self._graphics_widget = pg.GraphicsLayoutWidget()
-        self._graphics_widget.setBackground("w")
         self._graphics_widget.setToolTip(TIME_PLOT_HINT)
         layout.addWidget(self._graphics_widget)
 
     def _setup_plot(self):
         """Set up the plot axes."""
         self._plot = self._graphics_widget.addPlot(row=0, col=0, viewBox=TimeZoomViewBox())
-        self._plot.setLabel("bottom", "Time", units="s")
-        self._plot.setLabel("left", "Amplitude")
-        self._plot.showGrid(x=True, y=True, alpha=0.3)
+        # Data stays in volts; the axis shows µV (tick labels scaled only)
+        theme.style_plot(self._plot, self._graphics_widget, left_scale=1e6)
+        theme.axis_label(self._plot, "bottom", "Time (s)")
+        theme.axis_label(self._plot, "left", "Amplitude (µV)")
         # Fixed axis width so the linked analog plot lines up in time
         self._plot.getAxis("left").setWidth(LEFT_AXIS_WIDTH)
 
@@ -275,10 +268,11 @@ class TimeSeriesPlot(QWidget):
         for i, (name, vrms) in enumerate(entries):
             color = CHANNEL_COLORS[i % len(CHANNEL_COLORS)]
             lines.append(
-                f'<span style="color:{color}; font-size:10pt;">{name}&nbsp;&nbsp;{format_volts(vrms)}</span>'
+                f'<span style="color:{color}; font-size:{theme.SIZE_SMALL}px;">{name}&nbsp;&nbsp;'
+                f'<span style="color:{theme.TEXT_SECONDARY};">RMS</span>&nbsp;{format_volts(vrms)}</span>'
             )
         self._vrms_text.setHtml(
-            '<div style="background-color: rgba(255,255,255,190); text-align:right;">'
+            f'<div style="background-color: rgba(30,31,34,200); text-align:right;">'
             + "<br>".join(lines) + "</div>" if lines else ""
         )
 
@@ -292,8 +286,8 @@ class TimeSeriesPlot(QWidget):
         while len(self._threshold_lines) < len(levels):
             line = pg.InfiniteLine(
                 angle=0, movable=True,
-                pen=pg.mkPen("#c0392b", width=1.5, style=Qt.PenStyle.DashLine),
-                hoverPen=pg.mkPen("#c0392b", width=3),
+                pen=pg.mkPen(theme.THRESHOLD, width=1.5, style=Qt.PenStyle.DashLine),
+                hoverPen=pg.mkPen(theme.THRESHOLD, width=3),
             )
             line.setZValue(30)
             line.setToolTip("Spike threshold — drag to change k")
@@ -325,7 +319,7 @@ class TimeSeriesPlot(QWidget):
         self._blank_items = []
         for start, end in spans[:MAX_BLANK_SPANS]:
             item = pg.LinearRegionItem(
-                values=[start, end], brush=pg.mkBrush(120, 120, 120, 45),
+                values=[start, end], brush=pg.mkBrush(*theme.BLANK_SHADE),
                 pen=pg.mkPen(None), movable=False,
             )
             item.setZValue(-10)
@@ -382,7 +376,7 @@ class TimeSeriesPlot(QWidget):
 
                     self._selection_region = pg.LinearRegionItem(
                         values=[mid - span / 2, mid + span / 2],
-                        brush=pg.mkBrush(100, 100, 255, 50),
+                        brush=pg.mkBrush(76, 141, 255, 45),
                     )
                     self._selection_region.sigRegionChangeFinished.connect(
                         self._on_region_changed
@@ -452,15 +446,14 @@ class SpectrumPlot(QWidget):
         layout.setContentsMargins(0, 0, 0, 0)
 
         self._graphics_widget = pg.GraphicsLayoutWidget()
-        self._graphics_widget.setBackground("w")
         layout.addWidget(self._graphics_widget)
 
     def _setup_plot(self):
         """Set up the plot axes."""
         self._plot = self._graphics_widget.addPlot(row=0, col=0)
-        self._plot.setLabel("bottom", "Frequency", units="Hz")
-        self._plot.setLabel("left", "Power", units="dB")
-        self._plot.showGrid(x=True, y=True, alpha=0.3)
+        theme.style_plot(self._plot, self._graphics_widget)
+        theme.axis_label(self._plot, "bottom", "Frequency (Hz)")
+        theme.axis_label(self._plot, "left", "Power (dB)")
         self._plot.setMouseEnabled(x=True, y=True)
 
     def set_data(
@@ -495,18 +488,18 @@ class SpectrumPlot(QWidget):
 
         # Update axis label
         if method == "psd":
-            self._plot.setLabel("left", "PSD", units="V²/Hz")
+            theme.axis_label(self._plot, "left", "PSD (V²/Hz)")
         else:
-            self._plot.setLabel("left", "Magnitude")
+            theme.axis_label(self._plot, "left", "Magnitude")
 
         # Convert to dB if log magnitude
         if self._log_mag:
             # Avoid log(0)
             magnitude = 10 * np.log10(np.maximum(magnitude, 1e-20))
             if method == "psd":
-                self._plot.setLabel("left", "PSD", units="dB/Hz")
+                theme.axis_label(self._plot, "left", "PSD (dB/Hz)")
             else:
-                self._plot.setLabel("left", "Magnitude", units="dB")
+                theme.axis_label(self._plot, "left", "Magnitude (dB)")
 
         # Plot each channel
         for i, ch_idx in enumerate(channel_indices):

@@ -7,6 +7,7 @@ from PySide6.QtWidgets import QWidget, QVBoxLayout
 
 import pyqtgraph as pg
 
+from . import theme
 from .analog_plot import MODALITY_COLORS
 from .plot_widget import LEFT_AXIS_WIDTH, TIME_PLOT_HINT, TimeZoomViewBox
 
@@ -27,23 +28,23 @@ class RasterPlot(QWidget):
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
         self._graphics = pg.GraphicsLayoutWidget()
-        self._graphics.setBackground("w")
         layout.addWidget(self._graphics)
 
         self._plot = self._graphics.addPlot(row=0, col=0, viewBox=TimeZoomViewBox())
-        self._plot.setLabel("bottom", "Time", units="s")
-        self._plot.setLabel("left", "Electrode")
+        theme.style_plot(self._plot, self._graphics)
+        self._plot.showGrid(x=True, y=False, alpha=theme.GRID_ALPHA)
+        theme.axis_label(self._plot, "bottom", "Time (s)")
+        theme.axis_label(self._plot, "left", "Electrode")
         self._plot.getAxis("left").setWidth(LEFT_AXIS_WIDTH)
-        self._plot.showGrid(x=True, y=False, alpha=0.3)
         self._plot.setMouseEnabled(x=True, y=False)
         self._plot.getViewBox().setMouseMode(pg.ViewBox.PanMode)
         self._plot.hideButtons()
         self._graphics.setToolTip(TIME_PLOT_HINT + " · Click a row to open that electrode")
 
-        self._ticks = pg.PlotCurveItem(pen=pg.mkPen("#222222", width=1), connect="pairs")
+        self._ticks = pg.PlotCurveItem(pen=pg.mkPen(theme.TEXT, width=1), connect="pairs")
         self._plot.addItem(self._ticks)
         self._bands: List[pg.LinearRegionItem] = []
-        self._stale_text = pg.TextItem("", color="#c0392b", anchor=(1, 0))
+        self._stale_text = pg.TextItem("", color=theme.ERROR, anchor=(1, 0))
         self._stale_text.setParentItem(self._plot.getViewBox())
 
         self._channels: List[int] = []

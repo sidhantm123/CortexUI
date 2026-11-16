@@ -13,7 +13,7 @@ delete details that the code or git history already records.
 | Active branch | `NSP_Basic` (not pushed; branched from `main` @ `beb2da4`) |
 | Last commit | `96b62ac` Detect spikes across the whole recording and show them as a raster |
 | Tests | 109 passing: `tdtgui/bin/python -m unittest discover tests` |
-| Next step | User tests 4b; then waveform snippets or the later list (§4) |
+| Next step | User tests UI-1 (dark theme); then UI-2: plot header + left card + status bar → toast (§4) |
 
 ### Done
 1. Analog input viewer and event detection (`78664d0`).
@@ -38,6 +38,10 @@ delete details that the code or git history already records.
    - Detect Spikes runs over the whole recording, with σ frozen from the view.
    - It uses the shared chunk pipeline `core.export.iter_processed_chunks`, and the results feed the Raster tab.
    - Channel filtering is parallelised.
+10. UI-1:
+    - Dark theme (`ui/theme.py`) on all plots: faint grid, no axis box, monospace ticks.
+    - µV/mV axes, done by scaling tick labels only.
+    - One font policy, text roles in place of inline styles, accent-filled primary buttons.
 
 ### Branches
 - **`main`:** the TDT/Blackrock viewer with filters, FFT/PSD, probe map, export and `.ccf` info.
@@ -176,6 +180,25 @@ tests/                unittest; test_blackrock.py has write_nsx_23() to build sy
     - RP01 full detection with BP 250–5000: 472 s → 226 s, peak ~2.9 GB.
   - **RP01 finding:** with Basic ICMS blanking (post 500 ms), the raster shows a dense block on all electrodes for about
     1–3 s after each blank. That is the post-ICMS discharge, not spikes. Advanced blanking is the fix.
+- **Theme (`ui/theme.py`):**
+  - `apply_theme(app)` is called once in `main.py`: Fusion style, dark `QPalette`, one QSS and the UI font.
+  - `style_plot()` is applied to every pyqtgraph plot. Axis lines are transparent; grid lines use the tick pen at
+    `GRID_ALPHA`.
+  - `left_scale` relabels the ticks: 1e6 → µV for the neural plot, 1e3 → mV for analog. Data stays in volts.
+  - **Rules:**
+    - Use the colour tokens, `set_role(label, "secondary"|"warning"|"error"|"success"|"title"|"mono")` and
+      `set_primary(button)`.
+    - **Never inline colours or font styles.** Numbers use the monospace font, and QSS already covers spinboxes and
+      tables.
+  - The checkmark lives in `ui/assets/check.svg`, bundled via the spec.
+  - `ui/__init__.py` is lazy, so `ui.theme` loads without pyqtgraph and the splash shows immediately.
+  - **No `QGraphicsEffect`, animations or antialiasing.** Redraws are unchanged: ~12 ms, and 15 zoom steps take ~0.5 s
+    (offscreen).
+  - **Planned UI-2:**
+    - a plot header with the title and an RMS chip, plus blanking/filter chips;
+    - the left panel as a compact, collapsible card with middle-elided names;
+    - the status bar replaced by a toast;
+    - empty states and keyboard shortcuts.
 - **Plotting:**
   - Only a buffer of about 3× the view is read from disk, and it is min/max-decimated to ≤ 8000 points.
   - The analog plot keeps its own buffer and `WorkerManager`. It is x-linked to the main plot when Sync is on.

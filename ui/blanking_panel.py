@@ -25,6 +25,7 @@ from PySide6.QtWidgets import (
 
 from core.app_state import AppState
 from models.blanking import BASIC, ADVANCED, LINEAR, CUBIC, BlankingSettings
+from .theme import set_role, set_primary
 
 
 def _spin(minimum: float, maximum: float, decimals: int, suffix: str, step: float = 1.0) -> QDoubleSpinBox:
@@ -66,12 +67,13 @@ class ModalityBlankingPage(QWidget):
 
         self._status_label = QLabel("")
         self._status_label.setWordWrap(True)
-        self._status_label.setStyleSheet("font-size: 11px;")
+        set_role(self._status_label, "secondary")
         layout.addWidget(self._status_label)
 
         buttons = QHBoxLayout()
         self._apply_btn = QPushButton("Apply Blanking")
         self._apply_btn.clicked.connect(lambda: self.apply_requested.emit(self._modality))
+        set_primary(self._apply_btn)
         buttons.addWidget(self._apply_btn)
         self._remove_btn = QPushButton("Remove Blanking")
         self._remove_btn.clicked.connect(lambda: self.remove_requested.emit(self._modality))
@@ -94,7 +96,7 @@ class ModalityBlankingPage(QWidget):
         layout.addWidget(group)
         note = QLabel("Every trial and every electrode is blanked, then filled by linear interpolation.")
         note.setWordWrap(True)
-        note.setStyleSheet("color: gray; font-size: 11px;")
+        set_role(note, "secondary")
         layout.addWidget(note)
         layout.addStretch()
         return page
@@ -131,7 +133,7 @@ class ModalityBlankingPage(QWidget):
         form.addRow("Max post-pad:", self._max_post_spin)
         self._rule_label = QLabel("")
         self._rule_label.setWordWrap(True)
-        self._rule_label.setStyleSheet("color: gray; font-size: 11px;")
+        set_role(self._rule_label, "secondary")
         form.addRow(self._rule_label)
         layout.addWidget(group)
 
@@ -213,15 +215,15 @@ class ModalityBlankingPage(QWidget):
         res = self._app_state.blanking_results.get(self._modality)
         if res is None:
             self._status_label.setText("Not applied.")
-            self._status_label.setStyleSheet("color: gray; font-size: 11px;")
+            set_role(self._status_label, "secondary")
         elif res.stale:
             self._status_label.setText(
                 f"Applied ({res.summary()}). Events or settings changed — Apply again to update."
             )
-            self._status_label.setStyleSheet("color: #c0392b; font-size: 11px;")
+            set_role(self._status_label, "error")
         else:
             self._status_label.setText(f"Applied: {res.summary()}.")
-            self._status_label.setStyleSheet("color: #1e7d32; font-size: 11px;")
+            set_role(self._status_label, "success")
         self._remove_btn.setEnabled(res is not None)
         self._apply_btn.setEnabled(bool(self.events()))
 
@@ -293,7 +295,7 @@ class BlankingPanel(QWidget):
         )
         self._empty_label.setWordWrap(True)
         self._empty_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self._empty_label.setStyleSheet("color: gray;")
+        set_role(self._empty_label, "secondary")
         layout.addWidget(self._empty_label)
 
         self._tabs = QTabWidget()

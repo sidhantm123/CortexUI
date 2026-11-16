@@ -8,10 +8,11 @@ from PySide6.QtWidgets import QWidget, QVBoxLayout
 import pyqtgraph as pg
 
 from models.analog import StimEvent
+from . import theme
 from .plot_widget import LEFT_AXIS_WIDTH, TIME_PLOT_HINT, TimeZoomViewBox, setup_time_axes
 
 # One color per modality, assigned in the order modalities appear
-MODALITY_COLORS = ["#d62728", "#1f77b4", "#2ca02c", "#9467bd", "#ff7f0e", "#8c564b"]
+MODALITY_COLORS = theme.MODALITY_COLORS
 
 # Draw at most this many events' markers at once (only those in view are drawn)
 MAX_MARKERS = 300
@@ -33,20 +34,20 @@ class AnalogPlot(QWidget):
         layout.setContentsMargins(0, 0, 0, 0)
 
         self._graphics = pg.GraphicsLayoutWidget()
-        self._graphics.setBackground("w")
         self._graphics.setToolTip(TIME_PLOT_HINT)
         layout.addWidget(self._graphics)
 
         self._plot = self._graphics.addPlot(row=0, col=0, viewBox=TimeZoomViewBox())
-        self._plot.setLabel("bottom", "Time", units="s")
-        self._plot.setLabel("left", "Analog", units="V")
-        self._plot.showGrid(x=True, y=True, alpha=0.3)
+        # Data stays in volts; the axis shows mV (tick labels scaled only)
+        theme.style_plot(self._plot, self._graphics, left_scale=1e3)
+        theme.axis_label(self._plot, "bottom", "Time (s)")
+        theme.axis_label(self._plot, "left", "Analog (mV)")
         self._plot.getAxis("left").setWidth(LEFT_AXIS_WIDTH)
         setup_time_axes(self._plot)
         self._plot.sigRangeChanged.connect(self._on_range_changed)
 
-        self._curve = self._plot.plot(pen=pg.mkPen("#444444", width=1))
-        self._title = pg.TextItem("", color="#444444", anchor=(0, 0))
+        self._curve = self._plot.plot(pen=pg.mkPen(theme.ANALOG_TRACE, width=1))
+        self._title = pg.TextItem("", color=theme.TEXT_SECONDARY, anchor=(0, 0))
         self._title.setParentItem(self._plot.getViewBox())
         self._title.setPos(5, 2)
 
@@ -87,7 +88,7 @@ class AnalogPlot(QWidget):
             return
         self._highlight = pg.LinearRegionItem(
             values=[event.onset, event.offset],
-            brush=pg.mkBrush(255, 200, 0, 60),
+            brush=pg.mkBrush(*theme.HIGHLIGHT_SHADE),
             movable=False,
         )
         self._plot.addItem(self._highlight)

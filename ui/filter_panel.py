@@ -25,6 +25,8 @@ from PySide6.QtWidgets import (
 
 from models import StreamState, FilterConfig, FilterType
 from models.probe import ProbeGeometry
+from . import theme
+from .theme import set_role, set_primary
 
 
 # Colors for subgroups (distinct, readable)
@@ -124,21 +126,21 @@ class ChannelGroupWidget(QWidget):
 
         # Status label
         self._status_label = QLabel(f"0 / {self._num_channels} channels assigned")
-        self._status_label.setStyleSheet("color: gray; font-size: 11px;")
+        set_role(self._status_label, "secondary")
         layout.addWidget(self._status_label)
 
     def _channel_style(self, subgroup_idx: Optional[int]) -> str:
         """Return stylesheet for a channel button given its subgroup."""
         if subgroup_idx is None:
             return (
-                "QPushButton { background-color: #e0e0e0; border: 1px solid #bbb; "
-                "border-radius: 3px; font-size: 11px; }"
+                f"QPushButton {{ background-color: {theme.RAISED}; color: {theme.TEXT_SECONDARY}; "
+                f"border: 1px solid {theme.BORDER}; border-radius: 3px; font-size: 11px; padding: 0px; }}"
             )
         color = SUBGROUP_COLORS[subgroup_idx % len(SUBGROUP_COLORS)]
         return (
             f"QPushButton {{ background-color: {color}; color: white; "
-            f"border: 1px solid {color}; border-radius: 3px; font-weight: bold; "
-            f"font-size: 11px; }}"
+            f"border: 1px solid {color}; border-radius: 3px; font-weight: 600; "
+            f"font-size: 11px; padding: 0px; }}"
         )
 
     def _subgroup_style(self, idx: int, active: bool) -> str:
@@ -147,7 +149,7 @@ class ChannelGroupWidget(QWidget):
         if active:
             return (
                 f"QPushButton {{ background-color: {color}; color: white; "
-                f"border: 3px solid #333; border-radius: 4px; font-weight: bold; }}"
+                f"border: 2px solid {theme.TEXT}; border-radius: 4px; font-weight: 600; }}"
             )
         return (
             f"QPushButton {{ background-color: {color}; color: white; "
