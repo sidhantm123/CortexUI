@@ -11,9 +11,9 @@ delete details that the code or git history already records.
 | | |
 |---|---|
 | Active branch | `NSP_Basic` (not pushed; branched from `main` @ `beb2da4`) |
-| Last commit | `b332ee8` Run the whole filter chain on the all-channel buffer and cut CAR memory 3x |
+| Last commit | `177bdc4` Cap the plot buffer, load and render once per jump, keep buffer and selection consistent |
 | Tests | 115 passing: `tdtgui/bin/python -m unittest discover tests` |
-| Next step | User tests audit step 1; then audit step 2, buffer logic (§4 "Audit fixes") |
+| Next step | User tests audit step 2; then audit step 3, long-job lifecycle (§4 "Audit fixes") |
 
 ### Done
 1. Analog input viewer and event detection (`78664d0`).
@@ -60,6 +60,12 @@ delete details that the code or git history already records.
     - **Bug:** adding CAR/CMR while the buffer covered the view never loaded the all-channel data (fast path).
     - **Memory:** per-edit transient on a CAR view 4.0× → 1.35× of the all-channel buffer (1175 → 395 MB on a 3 s
       view); the buffer is freed when no CAR/CMR needs it. Render path unchanged.
+14. (`177bdc4`) Audit step 2 (buffer logic): view length capped by `MAX_BUFFER_SAMPLES` (zooming out used to load the
+    whole recording); one disk load and one render per jump (was 2 + 2; the y auto-fit re-render is gone); views
+    past the ends clamped before the buffer checks; `_apply_filters`/`_rerender_from_buffer` use the buffer's
+    channels; CAR channel change re-slices instead of reloading; scatter toggle no longer re-filters; spin boxes
+    fire once per typed number; stream switch sets the plot to the stream's view; the analog follower's range is no
+    longer set while linked (10 s view came out as 7.52 s at load; the Sync drift known issue is gone).
 
 ### Branches
 - **`main`:** the TDT/Blackrock viewer with filters, FFT/PSD, probe map, export and `.ccf` info.
@@ -245,10 +251,26 @@ tests/                unittest; test_blackrock.py has write_nsx_23() to build sy
     - The shortcuts are disabled while it does this; otherwise the re-sent key triggers them again, recursing until
       a `SystemError`.
 - **Plotting:**
-  - Only a buffer of about 3× the view is read from disk, and it is min/max-decimated to ≤ 8000 points.
-  - The analog plot keeps its own buffer and `WorkerManager`. It is x-linked to the main plot when Sync is on.
-  - Both plots use `LEFT_AXIS_WIDTH` so the linked time axes line up.
-  - Event markers are drawn only for events in view (`MAX_MARKERS`).
+  - Only a buffer of up to 3× the view is read from disk, and it is min/max-decimated to ≤ 8000 points.
+  - **Buffer cap:** `MainWindow.MAX_BUFFER_SAMPLES` (1e8 = 800 MB float64) limits the view length through
+    `TimeZoomViewBox.set_max_span` (`setLimits(maxXRange)`) on all three time plots, recomputed in
+    `_update_view_limits` whenever the loaded channel count changes (1 ch → 3333 s, 136 ch under CAR → 24 s); the
+    margin shrinks first. A clamp or a zoom-out stopped at the limit toasts.
+  - **One load, one render per move:** `_on_view_range_requested` sets `_setting_range` so the synchronous
+    `sigXRangeChanged` only updates the state, then calls `_refresh_plot` once; `_refresh_plot` keeps `_inflight`
+    and returns when a load already covers the view instead of cancelling it and re-reading. The plots listen to
+    `sigXRangeChanged`, not `sigRangeChanged` (the y auto-fit after every render would trigger a second render).
+  - `_apply_filters` and `_rerender_from_buffer` work on `_buffer_channels` (what `_raw_data` holds), never on the
+    current selection, which may have moved on while a load is in flight. `_on_data_loaded_async` drops
+    `_filtered_data` before re-filtering and leaves no buffer if that fails.
+  - Views are clamped to `[0, duration]` (`StreamState.set_view_range`) before any buffer check; the plot itself may
+    show past the ends (Ctrl+R pads 2 %).
+  - **Linked views push back:** pyqtgraph's `setXLink` is one-directional in storage but a follower's
+    `setXRange` calls `linkedViewChanged` on the master with a range re-derived from pixel geometry. Never set the
+    analog plot's range while Sync is on (that is how a 10 s view became 7.52 s at load and why the two plots used
+    to drift by a few ms after jumps); link it and let it follow.
+  - The analog plot keeps its own buffer and `WorkerManager`. Both plots use `LEFT_AXIS_WIDTH` so the linked time
+    axes line up. Event markers are drawn only for events in view (`MAX_MARKERS`).
 
 ### Conventions
 - Channel indices are 0-based internally and shown 1-based. Times are seconds from stream start. Data is in volts.
@@ -266,16 +288,8 @@ tests/                unittest; test_blackrock.py has write_nsx_23() to build sy
 ## 4. Roadmap
 
 ### Audit fixes (plan approved 2026-11-17; one commit per step, the user tests each)
-Findings came from a full audit (execution-verified on RP01 unless noted). Step 1 is done (§1 item 13). Remaining:
-2. **Buffer logic** (`main_window.py` `_refresh_plot`/`_on_view_range_requested`/`_on_stream_selected`/
-   `_apply_filters`, `control_panel.py`, `filter_panel.py`): no cap on the buffer — zooming out to the whole recording
-   loads it (48 s read, 1 GB for one channel, ×136 with CAR ⇒ OOM) → cap `MAX_BUFFER_SAMPLES` + `setLimits(maxXRange)`
-   + toast; every jump out of the buffer starts the same disk read twice (debounce + direct `_refresh_plot`) and jumps
-   inside render twice → in-flight guard; `update_view_range` writes unclamped values (views past the ends never hit
-   the buffer, Ctrl+R reloads); `_apply_filters` uses the selected channels, not `_buffer_channels` (IndexError when
-   an overlay load is in flight); stream switch leaves the x-range on the old stream (blank plot); scatter toggle
-   re-filters; spin box per keystroke → `setKeyboardTracking(False)`; CAR channel change should re-slice
-   `_raw_data_all`; `FilterPanel.set_state` `setChecked` emits `filters_changed` (fresh spikes marked stale).
+Findings came from a full audit (execution-verified on RP01 unless noted). Steps 1–2 are done (§1 items 13–14).
+Remaining:
 3. **Long-job lifecycle** (`workers.py`, done/failed callbacks, `closeEvent`, `theme.progress_dialog`): workers emit
    results after Cancel (EventDetectWorker never checks during detection) and `done()` applies them unguarded;
    `_load_block` doesn't cancel long jobs → add a recording generation counter, `is_cancelled()` before every emit,
@@ -283,13 +297,12 @@ Findings came from a full audit (execution-verified on RP01 unless noted). Step 
    `_analog_seq` not bumped on early returns; error lambdas lack a seq guard; `closeEvent` waits 3 s then closes the
    reader under running workers.
 4. **σ freeze** (`core/spike_detect.py`): `freeze_sigma` runs the whole view (+2 s pad) × all channels as one chunk —
-   10 s ≈ 2.9 GB, 30 s ≈ 7 GB ⇒ MemoryError → accumulate |x| per 5 s chunk; empty σ window must raise, not "0 spikes".
+   10 s ≈ 2.9 GB, 30 s ≈ 7 GB ⇒ MemoryError → accumulate |x| per 5 s chunk.
 5. **Render path** (`probe_map_widget.py`, `plot_widget.py`, `analog_plot.py`, `raster_plot.py`, `decimation.py`): a
    NaN RMS (fully blanked view + probe loaded) raises in the probe map *before* `set_data`, freezing the trace; blank
    regions / analog markers / raster bands / probe spots are rebuilt every render (3–36 ms each, hidden tabs too) →
    reuse items, skip when unchanged or hidden; min/max decimation never draws the last ≤ 3999 samples of a view
-   (`reduceat` with `linspace` edges); connect `sigXRangeChanged` instead of `sigRangeChanged` (y auto-fit re-render,
-   not reproducible offscreen).
+   (`reduceat` with `linspace` edges).
 6. **Failed load / session** (`main_window.py`, `app_state.py`): a failed Open empties `AppState` but leaves the old
    panels, title and buffer (then `ValueError`/`KeyError` on clicks) → load into locals, then `close()`; parse a
    session fully before `load_block`, tolerate unknown filter types with a `load_messages` note; atomic session save.
@@ -349,8 +362,7 @@ Findings came from a full audit (execution-verified on RP01 unless noted). Step 
   in the archive (`nsp_pipeline:blackrock_io/nsx_header.py`) if it's ever needed.
 
 ### Known issues
-- With Sync on, after jumping to an event the two plots' time ranges can differ by a few ms (~0.3% of the window). Toggling
-  Sync realigns them.
+- None open. (The Sync drift of a few ms after jumps was the linked-view push-back; fixed in audit step 2.)
 
 ---
 
