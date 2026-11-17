@@ -11,8 +11,8 @@ delete details that the code or git history already records.
 | | |
 |---|---|
 | Active branch | `NSP_Basic` (not pushed; branched from `main` @ `beb2da4`) |
-| Last commit | `264594e` Record audit step 3 in CLAUDE.md |
-| Tests | 135 passing: `tdtgui/bin/python -m unittest discover tests` |
+| Last commit | `98f5b1f` Freeze sigma in chunks and free each pipeline chunk before the next read |
+| Tests | 140 passing: `tdtgui/bin/python -m unittest discover tests` |
 | Next step | Audit steps 4–11 run back to back (user request, 2026-11-17); then the user tests them together |
 
 ### Done
@@ -83,10 +83,16 @@ delete details that the code or git history already records.
     - `export_binary` deletes its file when cancelled or failed (also when quitting). Quit, Open and Load Session
       ask before stopping a running export; quit waits for the jobs (up to 10 s) before closing the reader.
     - Progress dialogs are freed (`deleteLater`); every closed one used to stay alive with its worker.
-17. Audit step 4 (σ freeze): `freeze_sigma` works in 5 s chunks keeping only |x| (float32) and can be cancelled
+17. (`98f5b1f`) Audit step 4 (σ freeze): `freeze_sigma` works in 5 s chunks keeping only |x| (float32) and can be cancelled
     (0–10 % of Detect Spikes). The chunk pipeline frees each chunk before reading the next (two were alive at
     once). RP01, 128 ch, BP 250–5000: 20 s view + CAR peak 2.75 → 1.11 GB numpy, 10 s BP 0.87 → 0.61 GB; σ
     identical to 1e-7.
+18. Audit step 5 (render path): a fully blanked view (NaN RMS) with a probe map loaded made the probe map raise,
+    which discarded every load in that view (frozen trace, "Could not process" toast); NaN is now "no data" and
+    the probe map updates after the trace. Blank shading reuses its items and skips unchanged spans; analog
+    markers and raster bands rebuild only when the events in view change; the probe map doesn't rebuild while
+    hidden. Min/max decimation now draws the last samples of a view. Rerender 13 → 8 ms (18 → 8 ms with the
+    probe tab shown); what remains of a pan step is pyqtgraph painting the axes.
 
 ### Branches
 - **`main`:** the TDT/Blackrock viewer with filters, FFT/PSD, probe map, export and `.ccf` info.
@@ -352,13 +358,8 @@ tests/                unittest; test_blackrock.py has write_nsx_23() to build sy
 ## 4. Roadmap
 
 ### Audit fixes (plan approved 2026-11-17; one commit per step, the user tests each)
-Findings came from a full audit (execution-verified on RP01 unless noted). Steps 1–4 are done (§1 items 13, 14,
-16, 17). Remaining:
-5. **Render path** (`probe_map_widget.py`, `plot_widget.py`, `analog_plot.py`, `raster_plot.py`, `decimation.py`): a
-   NaN RMS (fully blanked view + probe loaded) raises in the probe map *before* `set_data`, freezing the trace; blank
-   regions / analog markers / raster bands / probe spots are rebuilt every render (3–36 ms each, hidden tabs too) →
-   reuse items, skip when unchanged or hidden; min/max decimation never draws the last ≤ 3999 samples of a view
-   (`reduceat` with `linspace` edges).
+Findings came from a full audit (execution-verified on RP01 unless noted). Steps 1–5 are done (§1 items 13, 14,
+16–18). Remaining:
 6. **Failed load / session** (`main_window.py`, `app_state.py`): a failed Open empties `AppState` but leaves the old
    panels, title and buffer (then `ValueError`/`KeyError` on clicks) → load into locals, then `close()`; parse a
    session fully before `load_block`, tolerate unknown filter types with a `load_messages` note; atomic session save.

@@ -51,6 +51,7 @@ class RasterPlot(QWidget):
         self._ticks = pg.PlotCurveItem(pen=pg.mkPen(theme.TEXT, width=1), connect="pairs")
         self._plot.addItem(self._ticks)
         self._bands: List[pg.LinearRegionItem] = []
+        self._band_key = None  # the visible events the bands show
         self._stale_text = pg.TextItem("", color=theme.ERROR, anchor=(1, 0))
         self._stale_text.setParentItem(self._plot.getViewBox())
 
@@ -125,6 +126,7 @@ class RasterPlot(QWidget):
     def set_events(self, events, modalities: List[str]):
         self._events = sorted(events, key=lambda e: e.onset)
         self._colors = {m: MODALITY_COLORS[i % len(MODALITY_COLORS)] for i, m in enumerate(modalities)}
+        self._band_key = None  # colours may have changed
         self._redraw()
 
     def clear(self):
@@ -154,10 +156,15 @@ class RasterPlot(QWidget):
         else:
             self._ticks.setData([], [])
 
+        visible = [e for e in self._events if e.offset >= x0 and e.onset <= x1][:MAX_EVENT_BANDS]
+        key = [(id(e), e.onset, e.offset, e.modality) for e in visible]
+        if key == self._band_key:
+            return
+        self._band_key = key
         for band in self._bands:
             self._plot.removeItem(band)
         self._bands = []
-        for e in [e for e in self._events if e.offset >= x0 and e.onset <= x1][:MAX_EVENT_BANDS]:
+        for e in visible:
             color = pg.mkColor(self._colors.get(e.modality, "#d62728"))
             color.setAlpha(45)
             band = pg.LinearRegionItem(values=[e.onset, e.offset], brush=pg.mkBrush(color),

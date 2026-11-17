@@ -23,6 +23,7 @@ class ProbeMapWidget(QWidget):
         - Red   → high Vrms  (linear scale within the observed range)
     A white ring marks the currently selected channel.
     Hovering over a contact shows a tooltip with metadata.
+    Nothing is rebuilt while the widget is hidden (it is updated on every render).
     """
 
     def __init__(self, parent=None):
@@ -30,6 +31,7 @@ class ProbeMapWidget(QWidget):
         self._probe: Optional[ProbeGeometry] = None
         self._vrms_dict: Dict[int, float] = {}
         self._selected_ch: int = -1
+        self._dirty = False  # values changed while hidden: rebuilt in showEvent
 
         self._setup_ui()
 
@@ -81,18 +83,34 @@ class ProbeMapWidget(QWidget):
 
         self._placeholder.setVisible(False)
         self._plot_widget.setVisible(True)
+        self._dirty = False
         self._rebuild_spots()
 
     def update_vrms(self, vrms_dict: Dict[int, float]):
-        """Recolor contacts based on updated Vrms values."""
-        self._vrms_dict = vrms_dict or {}
-        if self._probe is not None:
-            self._rebuild_spots()
+        """Recolor contacts based on updated Vrms values (NaN = fully blanked: no data)."""
+        vrms = {c: v for c, v in (vrms_dict or {}).items() if v is not None and np.isfinite(v)}
+        if vrms != self._vrms_dict:
+            self._vrms_dict = vrms
+            self._changed()
 
     def set_selected_channel(self, ch_idx: int):
         """Highlight the contact for the given 0-indexed channel with a white ring."""
-        self._selected_ch = ch_idx
-        if self._probe is not None:
+        if ch_idx != self._selected_ch:
+            self._selected_ch = ch_idx
+            self._changed()
+
+    def _changed(self):
+        if self._probe is None:
+            return
+        if self.isVisible():
+            self._rebuild_spots()
+        else:
+            self._dirty = True
+
+    def showEvent(self, event):
+        super().showEvent(event)
+        if self._dirty:
+            self._dirty = False
             self._rebuild_spots()
 
     def clear(self):

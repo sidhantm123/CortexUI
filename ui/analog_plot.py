@@ -55,6 +55,7 @@ class AnalogPlot(QWidget):
         self._events: List[StimEvent] = []
         self._colors: Dict[str, str] = {}
         self._markers: List[pg.InfiniteLine] = []
+        self._marker_key = None  # the visible events the markers show
         self._highlight: Optional[pg.LinearRegionItem] = None
         self._highlighted: Optional[StimEvent] = None
         self._dragging = False
@@ -77,7 +78,7 @@ class AnalogPlot(QWidget):
         self._colors = {
             m: MODALITY_COLORS[i % len(MODALITY_COLORS)] for i, m in enumerate(modalities)
         }
-        self._update_markers()
+        self._update_markers(force=True)
 
     def highlight_event(self, event: Optional[StimEvent]):
         """Shade the selected event."""
@@ -111,23 +112,28 @@ class AnalogPlot(QWidget):
         """Redraw markers and the highlight after event times changed."""
         self._events = sorted(self._events, key=lambda e: e.onset)
         self.highlight_event(self._highlighted)
-        self._update_markers()
+        self._update_markers(force=True)
 
-    def _update_markers(self):
+    def _update_markers(self, force: bool = False):
+        """Draggable lines for the events in view; rebuilt only when that set changes (pans
+        call this on every frame)."""
         if self._dragging:
             return
+        visible = []
+        if self._events:
+            x0, x1 = self._plot.viewRange()[0]
+            onsets = np.array([e.onset for e in self._events])
+            i0 = int(np.searchsorted(onsets, x0 - 10.0))
+            visible = [e for e in self._events[i0:] if e.onset <= x1 and e.offset >= x0][:MAX_MARKERS]
+        key = [(id(e), e.onset, e.offset, e.modality) for e in visible]
+        if not force and key == self._marker_key:
+            return
+        self._marker_key = key
         for line in self._markers:
             self._plot.removeItem(line)
         self._markers = []
-        if not self._events:
-            return
-
-        x0, x1 = self._plot.viewRange()[0]
-        onsets = np.array([e.onset for e in self._events])
-        i0 = int(np.searchsorted(onsets, x0 - 10.0))
-        visible = [e for e in self._events[i0:] if e.onset <= x1 and e.offset >= x0]
         eps = 1e-5  # keeps onset strictly before offset while dragging
-        for e in visible[:MAX_MARKERS]:
+        for e in visible:
             color = self._colors.get(e.modality, "#d62728")
             pen = pg.mkPen(color, width=1, style=Qt.PenStyle.DashLine)
             hover = pg.mkPen(color, width=3)

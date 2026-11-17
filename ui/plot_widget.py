@@ -228,6 +228,7 @@ class TimeSeriesPlot(QWidget):
 
         # Shaded blanked spans
         self._blank_items: List[pg.LinearRegionItem] = []
+        self._blank_spans: List[Tuple[float, float]] = []  # what _blank_items show
 
         # Spike threshold lines (draggable)
         self._threshold_lines: List[pg.InfiniteLine] = []
@@ -462,11 +463,21 @@ class TimeSeriesPlot(QWidget):
         self.threshold_dragged.emit(abs(float(line.value())))
 
     def set_blank_spans(self, spans: List[Tuple[float, float]]):
-        """Lightly shade blanked time spans (at most MAX_BLANK_SPANS)."""
-        for item in self._blank_items:
+        """
+        Lightly shade blanked time spans (at most MAX_BLANK_SPANS). Called on every render,
+        so unchanged spans cost nothing and existing items are moved rather than rebuilt.
+        """
+        spans = [(float(a), float(b)) for a, b in spans[:MAX_BLANK_SPANS]]
+        if spans == self._blank_spans:
+            return
+        self._blank_spans = spans
+        for item in self._blank_items[len(spans):]:
             self._plot.removeItem(item)
-        self._blank_items = []
-        for start, end in spans[:MAX_BLANK_SPANS]:
+        del self._blank_items[len(spans):]
+        for i, (start, end) in enumerate(spans):
+            if i < len(self._blank_items):
+                self._blank_items[i].setRegion((start, end))
+                continue
             item = pg.LinearRegionItem(
                 values=[start, end], brush=pg.mkBrush(*theme.BLANK_SHADE),
                 pen=pg.mkPen(None), movable=False,

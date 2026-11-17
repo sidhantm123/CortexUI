@@ -1251,7 +1251,6 @@ class MainWindow(QMainWindow):
         vrms = compute_vrms(data_view, channels, mask_view)
         state.vrms_values = vrms
         self._time_plot.set_vrms([(state.channel_label(c), vrms.get(c)) for c in channels])
-        self._probe_map.update_vrms(vrms)
         self._update_spike_overlay(state, channels, data_view, time_view, mask_view, end - start)
 
         n = data_view.shape[1] if data_view.ndim > 1 else len(data_view)
@@ -1277,6 +1276,7 @@ class MainWindow(QMainWindow):
             self._time_plot.set_title(*self._plot_title(state, channels))
             self._last_plot_channels = channels
             self._last_scatter_mode = scatter
+        self._probe_map.update_vrms(vrms)  # after the trace: nothing here may hold it back
 
     @staticmethod
     def _chain_needs_all(state) -> bool:
