@@ -6,12 +6,14 @@ import unittest
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
+from PySide6.QtCore import QEvent, QPoint, QPointF, Qt
+from PySide6.QtGui import QMouseEvent
 from PySide6.QtWidgets import QApplication, QMessageBox, QPushButton
 
 app = QApplication.instance() or QApplication([])
 
 from models.filter_config import FilterConfig, FilterType  # noqa: E402
-from ui.filter_panel import FilterEditDialog  # noqa: E402
+from ui.filter_panel import EXCLUDED, ChannelGroupWidget, FilterEditDialog  # noqa: E402
 from ui.probe_import_dialog import ProbeImportDialog  # noqa: E402
 
 
@@ -59,6 +61,108 @@ class TestFilterDialog(unittest.TestCase):
         dialog.accept()
         self.assertEqual(dialog.result(), 1)
         self.assertEqual(dialog.get_config().channel_groups, [[0, 1], [2]])
+
+
+class TestChannelGroupDrag(unittest.TestCase):
+    """Click and drag over the CAR/CMR electrode grid (electrodes 1-64, 8 per row)."""
+
+    def setUp(self):
+        self.w = ChannelGroupWidget(list(range(64)), {c: c + 1 for c in range(64)})
+        self.w.resize(450, 400)
+        self.w.show()
+        app.processEvents()
+        self.grid = self.w._grid
+        self.changes = []
+        self.w.assignment_changed.connect(lambda: self.changes.append(1))
+
+    def tearDown(self):
+        self.w.close()
+
+    def _at(self, electrode) -> QPointF:
+        return QPointF(self.w._channel_buttons[electrode - 1].geometry().center())
+
+    def _send(self, kind, point, button, buttons):
+        QApplication.sendEvent(self.grid, QMouseEvent(kind, QPointF(point), QPointF(self.grid.mapToGlobal(point.toPoint())),
+                                                      button, buttons, Qt.KeyboardModifier.NoModifier))
+
+    def _drag(self, *electrodes):
+        """Press on the first, move straight to each next one, release on the last."""
+        left, none = Qt.MouseButton.LeftButton, Qt.MouseButton.NoButton
+        self._send(QEvent.Type.MouseButtonPress, self._at(electrodes[0]), left, left)
+        for e in electrodes[1:]:
+            self._send(QEvent.Type.MouseMove, self._at(e), none, left)
+        self._send(QEvent.Type.MouseButtonRelease, self._at(electrodes[-1]), left, none)
+
+    def _group(self, sg):
+        return sorted(c + 1 for c, v in self.w._assignments.items() if v == sg)
+
+    def test_diagonal_drag_takes_the_run_between(self):
+        self.w._on_add_subgroup()
+        self._drag(1, 32)  # row 1 col 1 -> row 4 col 8, nothing in between touched
+        self.assertEqual(self._group(0), list(range(1, 33)))
+        self._drag(48, 60)  # a second drag adds to the same group
+        self.assertEqual(self._group(0), list(range(1, 33)) + list(range(48, 61)))
+        self.assertEqual(len(self.changes), 2)
+
+    def test_new_group_takes_electrodes_over(self):
+        self.w._on_add_subgroup()
+        self._drag(1, 32)
+        self._drag(48, 60)
+        self.w._on_add_subgroup()
+        self._drag(40, 20)  # backwards works too
+        self.assertEqual(self._group(1), list(range(20, 41)))
+        self.assertEqual(self._group(0), list(range(1, 20)) + list(range(48, 61)))
+        self.assertEqual(self.w.get_channel_groups(),
+                         [[c - 1 for c in list(range(1, 20)) + list(range(48, 61))], list(range(19, 40))])
+
+    def test_dragging_back_shrinks_the_run(self):
+        self.w._on_add_subgroup()
+        self._drag(5, 6)
+        self._drag(10, 30, 12)  # out to 30, back to 12
+        self.assertEqual(self._group(0), [5, 6] + list(range(10, 13)))
+
+    def test_click_still_toggles(self):
+        self.w._on_add_subgroup()
+        self._drag(7)
+        self.assertEqual(self._group(0), [7])
+        self._drag(7)
+        self.assertEqual(self._group(0), [])
+
+    def test_exclude_brush(self):
+        self.w._on_add_subgroup()
+        self._drag(1, 64)
+        self.w._set_brush(EXCLUDED)
+        self._drag(10)  # e.g. the stimulation electrode
+        self._drag(62, 64)
+        self.assertEqual(self._group(EXCLUDED), [10, 62, 63, 64])
+        self.assertTrue(self.w.all_assigned())
+        groups = self.w.get_channel_groups()
+        self.assertEqual(len(groups), 1)
+        self.assertNotIn(9, groups[0])
+        self.assertIn("4 excluded", self.w._status_label.text())
+
+    def test_gaps_and_edges_map_to_the_nearest_electrode(self):
+        b1, b2 = (self.w._channel_buttons[i].geometry() for i in (0, 1))
+        gap = QPoint((b1.right() + b2.left()) // 2, b1.center().y())
+        self.assertIn(self.grid.position_at(gap), (0, 1))
+        past_right = QPoint(self.w._channel_buttons[7].geometry().right() + 200, b1.center().y())
+        self.assertEqual(self.grid.position_at(past_right), 7)  # electrode 8, end of row 1
+
+    def test_nothing_happens_without_a_brush(self):
+        self._drag(1, 10)
+        self.assertEqual(self._group(0), [])
+        self.assertIn("first", self.w._status_label.text())
+
+
+class TestEditingCarKeepsExclusions(unittest.TestCase):
+
+    def test_electrodes_outside_the_saved_groups_show_as_excluded(self):
+        config = FilterConfig(FilterType.CAR, channel_groups=[[c for c in range(16) if c != 9]])
+        dialog = FilterEditDialog(filter_config=config, sample_rate=30000.0, channels=list(range(16)))
+        widget = dialog._group_widget
+        self.assertEqual(widget._assignments[9], EXCLUDED)
+        self.assertTrue(dialog._button_box.button(dialog._button_box.StandardButton.Ok).isEnabled())
+        self.assertEqual(widget.get_channel_groups(), config.channel_groups)
 
 
 if __name__ == "__main__":

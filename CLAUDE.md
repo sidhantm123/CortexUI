@@ -11,9 +11,9 @@ delete details that the code or git history already records.
 | | |
 |---|---|
 | Active branch | `NSP_Basic` (not pushed; branched from `main` @ `beb2da4`) |
-| Last commit | `4dbb788` Read probeinterface channel indices as 0-based, with -1 for unconnected contacts |
-| Tests | 174 passing: `tdtgui/bin/python -m unittest discover tests` |
-| Next step | User tests audit steps 4–11 together (run back to back on request, 2026-11-17/18) |
+| Last commit | `395374d` Record audit steps 10 and 11 in CLAUDE.md |
+| Tests | 182 passing: `tdtgui/bin/python -m unittest discover tests` |
+| Next step | User tests audit steps 4–11 and the CAR/CMR drag selection |
 
 ### Done
 1. Analog input viewer and event detection (`78664d0`).
@@ -127,6 +127,11 @@ delete details that the code or git history already records.
     1-based, shifting every contact by one channel); −1 = not connected (`models.probe.UNWIRED`: drawn grey, left
     out of shank groups and selection, "–" in the Table Editor). Sessions write `probe_index_base: 0`; older ones
     (no key, saved as channel + 1) still load. **Not checked against a lab probe file.**
+25. CAR/CMR group dialog (user request): press and drag selects every electrode between the press and the cursor
+    in reading order (`_ChannelGrid`: buttons are mouse-transparent, the nearest button centre wins, auto-scroll
+    past the visible rows); drags add up; the selected subgroup takes electrodes over; an **Exclude** brush leaves
+    electrodes in no group (`EXCLUDED`). A click still toggles. Editing a saved filter shows electrodes in no
+    group as excluded.
 
 ### Branches
 - **`main`:** the TDT/Blackrock viewer with filters, FFT/PSD, probe map, export and `.ccf` info.
@@ -224,6 +229,7 @@ tests/                unittest; test_blackrock.py has write_nsx_23() to build sy
     the chain references all channels first, then filters **only the displayed rows** (one CAR filter: `car_rows`
     subtracts each group's mean from the requested rows, no re-referenced copy of all channels; 136 ch × 15 s:
     0.07 s, 16 MB transient). **CMR** (a median) doesn't commute, so a chain with CMR runs in order on every channel.
+  - A channel in no CAR/CMR group (the dialog's **Exclude**) is neither re-referenced nor part of any mean/median.
   - **Memory rules** (the all-channel buffer is ~1 GB for a 10 s view of 136 ch): the chain makes one working copy
     and then filters it in place; pass `inplace_ok=True` when the array you hand it is already scratch (a blanked
     copy, a pipeline chunk), never for `_raw_data`/`_raw_data_all`. `apply_car`/`apply_cmr` work row by row and take
