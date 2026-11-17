@@ -240,94 +240,76 @@ class FilterWorker(CancellableWorker):
 
 class SpectralWorker(CancellableWorker):
     """
-    Worker for spectral analysis (FFT/PSD).
+    FFT or Welch PSD of samples [i_start, i_stop) of some channels, after blanking and the
+    filter chain (CAR/CMR included), read in chunks the same way as Export.
 
     Emits result as dict with:
         - 'freqs': frequency array
-        - 'magnitude': magnitude array (for FFT) or PSD values
+        - 'magnitude': (channels x freqs) FFT amplitude or PSD
         - 'method': 'fft' or 'psd'
         - 'channels': list of channel indices
+        - 'warnings': filter chain warnings (e.g. a skipped filter)
     """
 
-    def __init__(
-        self,
-        data: np.ndarray,
-        fs: float,
-        method: str = "psd",  # 'fft' or 'psd'
-        channels: Optional[List[int]] = None,
-        nperseg: int = 1024,
-        overlap: float = 0.5,
-    ):
+    def __init__(self, reader, stream: str, channels: List[int], i_start: int, i_stop: int,
+                 fs: float, num_channels: int, blank_results=(), filters=None,
+                 method: str = "psd", nperseg: int = 1024, overlap: float = 0.5):
         super().__init__()
-        self.data = data
+        self.reader = reader
+        self.stream = stream
+        self.channels = list(channels)
+        self.i_start = i_start
+        self.i_stop = i_stop
         self.fs = fs
+        self.num_channels = num_channels
+        self.blank_results = list(blank_results)
+        self.filters = filters
         self.method = method
-        self.channels = channels
         self.nperseg = nperseg
         self.overlap = overlap
 
     @Slot()
     def run(self):
-        """Execute the spectral analysis."""
+        from core.export import iter_processed_chunks
+
         self.signals.started.emit()
-
         try:
-            if self.is_cancelled():
-                self.signals.cancelled.emit()
-                return
+            data = np.empty((len(self.channels), self.i_stop - self.i_start))
+            warnings: List[str] = []
+            for k, n_chunks, a, b, out, _ in iter_processed_chunks(
+                self.reader, self.stream, self.channels, self.i_start, self.i_stop, self.fs,
+                self.num_channels, self.blank_results, self.filters, warnings=warnings,
+            ):
+                if self.is_cancelled():
+                    self.signals.cancelled.emit()
+                    return
+                data[:, a - self.i_start: b - self.i_start] = out
+                del out  # see iter_processed_chunks
+                self.signals.progress.emit(int(80 * (k + 1) / n_chunks))
 
-            self.signals.progress.emit(10)
-
-            # Select channels
-            if self.data.ndim == 1:
-                data_to_analyze = self.data
-                actual_channels = [0]
-            else:
-                if self.channels is not None:
-                    valid_channels = [
-                        c for c in self.channels
-                        if 0 <= c < self.data.shape[0]
-                    ]
-                    if valid_channels:
-                        data_to_analyze = self.data[valid_channels, :]
-                        actual_channels = valid_channels
-                    else:
-                        data_to_analyze = self.data
-                        actual_channels = list(range(self.data.shape[0]))
+            # One channel at a time keeps the FFT's temporaries small
+            spectra = []
+            for i, row in enumerate(data):
+                if self.is_cancelled():
+                    self.signals.cancelled.emit()
+                    return
+                if self.method == "fft":
+                    freqs, magnitude = compute_fft(row, self.fs)
                 else:
-                    data_to_analyze = self.data
-                    actual_channels = list(range(self.data.shape[0]))
+                    freqs, magnitude = compute_psd(row, self.fs, nperseg=self.nperseg, overlap=self.overlap)
+                spectra.append(magnitude)
+                self.signals.progress.emit(80 + int(20 * (i + 1) / len(data)))
 
             if self.is_cancelled():
                 self.signals.cancelled.emit()
                 return
-
-            self.signals.progress.emit(50)
-
-            if self.method == "fft":
-                freqs, magnitude = compute_fft(data_to_analyze, self.fs)
-            else:
-                freqs, magnitude = compute_psd(
-                    data_to_analyze,
-                    self.fs,
-                    nperseg=self.nperseg,
-                    overlap=self.overlap,
-                )
-
-            if self.is_cancelled():
-                self.signals.cancelled.emit()
-                return
-
-            self.signals.progress.emit(100)
-
-            result = {
+            self.signals.result.emit({
                 "freqs": freqs,
-                "magnitude": magnitude,
+                "magnitude": np.vstack(spectra),
                 "method": self.method,
-                "channels": actual_channels,
-            }
-
-            self.signals.result.emit(result)
+                "channels": self.channels,
+                "warnings": warnings,
+            })
             self.signals.finished.emit()
 
         except Exception as e:

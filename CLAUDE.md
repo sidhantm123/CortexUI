@@ -11,8 +11,8 @@ delete details that the code or git history already records.
 | | |
 |---|---|
 | Active branch | `NSP_Basic` (not pushed; branched from `main` @ `beb2da4`) |
-| Last commit | `3e49243` Leave the current recording untouched when an Open or session load fails |
-| Tests | 152 passing: `tdtgui/bin/python -m unittest discover tests` |
+| Last commit | `7658f42` Drop events and blanking that no longer belong to an analog line |
+| Tests | 153 passing: `tdtgui/bin/python -m unittest discover tests` |
 | Next step | Audit steps 4–11 run back to back (user request, 2026-11-17); then the user tests them together |
 
 ### Done
@@ -98,11 +98,15 @@ delete details that the code or git history already records.
     across recordings, as the UI already showed. `load_session` parses the whole file before opening the
     recording; unknown or invalid saved filters are skipped with a `load_messages` note (one used to abort the
     session). `save_session` writes a `.tmp` file and renames it.
-20. Audit step 7 (events / assignments): unassigning a line or moving it to another modality drops its events
+20. (`7658f42`) Audit step 7 (events / assignments): unassigning a line or moving it to another modality drops its events
     (`AppState._drop_events`); a modality's blanking result goes with its last event (its tab disappears) and is
     marked stale otherwise; `assignments_changed(bool)` re-processes when blanking went. Analog-list edits also
     take new analog channels out of CAR/CMR groups and refresh the Blanking tab. Excluded trials follow their
     events through renumbering (`_renumber`); "nan"/"inf" in an event cell is rejected (`round(nan)` raised).
+21. Audit step 8 (Analyze): `SpectralWorker` reads through `iter_processed_chunks` (blanking, filters, CAR/CMR
+    with all channels: CAR used to be skipped silently) and runs via `_run_job("analysis")` with Cancel.
+    Intervals are validated and capped at `MAX_ANALYSIS_SAMPLES` (3e7: 8 ch → 125 s). The pipeline collects
+    filter warnings (`warnings=` list). RP01 8 ch × 60 s BP+CAR PSD: 5.6 s, GUI stalls ≤ 37 ms.
 
 ### Branches
 - **`main`:** the TDT/Blackrock viewer with filters, FFT/PSD, probe map, export and `.ccf` info.
@@ -182,8 +186,8 @@ tests/                unittest; test_blackrock.py has write_nsx_23() to build sy
 - **Blanking (`models/blanking.py`, `dsp/blanking.py`, `BlankingWorker`):**
   - Settings are per modality (`AppState.blanking_settings`). Results are per modality (`AppState.blanking_results`),
     each holding the stream plus `start_s`/`end_s` of shape (trials × channels). Never store a sample mask.
-  - `MainWindow._blank()` interpolates the active results before `apply_filter_chain`: in the plot (display rows and
-    the all-channel CAR buffer), Analysis and Export. `apply_blanking` copies only when a span overlaps the buffer and
+  - The active results are interpolated before `apply_filter_chain` everywhere: the plot (`process_buffer`, display
+    rows and the all-channel CAR buffer) and the chunked jobs (`iter_processed_chunks`: Analysis, Export, spikes). `apply_blanking` copies only when a span overlaps the buffer and
     otherwise returns the input itself; the raw buffer is never modified, so Remove is instant.
   - **Advanced:**
     - Baseline per channel = the median 50 ms window RMS of the **250–5000 Hz** band over 20 one-second windows at least
@@ -369,11 +373,8 @@ tests/                unittest; test_blackrock.py has write_nsx_23() to build sy
 ## 4. Roadmap
 
 ### Audit fixes (plan approved 2026-11-17; one commit per step, the user tests each)
-Findings came from a full audit (execution-verified on RP01 unless noted). Steps 1–7 are done (§1 items 13, 14,
-16–20). Remaining:
-8. **Analyze** (`main_window.py`, `spectrum_panel.py`, `workers.py`): synchronous on the GUI thread, CAR/CMR silently
-   skipped (no all-channel data; warnings dropped), no interval limit (whole recording × 8 ch = 1.85 GB), Cancel inert
-   → validate, cap, run through `iter_processed_chunks` in `SpectralWorker`.
+Findings came from a full audit (execution-verified on RP01 unless noted). Steps 1–8 are done (§1 items 13, 14,
+16–21). Remaining:
 9. **Small fixes**: `is_analog_label` makes every ID > 128 analog even with an electrode label; probe Table Editor
    broken (`clicked(checked)` into `append_row`, OK disabled); event detection holds 2× each line (preallocate
    float32); `splash.finish` before `show()` costs 1.0 s; no `sys.excepthook` with `console=False`; Blackrock drops the

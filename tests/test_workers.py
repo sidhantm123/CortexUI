@@ -11,7 +11,9 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from blackrock_io import BlackrockReader
 from blackrock_io.blackrock_reader import NEO_AVAILABLE
-from core.workers import BlankingWorker, EventDetectWorker, ExportWorker, SpikeDetectWorker
+from core.workers import BlankingWorker, EventDetectWorker, ExportWorker, SpectralWorker, SpikeDetectWorker
+from dsp import compute_fft, compute_psd
+from models.filter_config import FilterConfig, FilterType
 from models.analog import AnalogAssignment, DetectionSettings
 from models.blanking import ADVANCED, BlankingSettings
 from models.spikes import SpikeSettings
@@ -110,6 +112,22 @@ class TestCancelAfterLastRead(unittest.TestCase):
         self._check(make)
         out, reads = self._run(make, cancel_at=1)  # during the sigma freeze
         self.assertEqual((set(out), reads), ({"cancelled"}, 1))
+
+    def test_spectral_analysis(self):
+        i0, i1 = int(2 * FS), int(14 * FS)  # 12 s: three 5 s chunks
+
+        def make(method, filters=None):
+            return lambda reader: SpectralWorker(reader, self.stream, [0, 2], i0, i1, FS, N_CH,
+                                                 filters=filters, method=method, nperseg=2048)
+        psd = self._check(make("psd"))
+        raw, _ = self.reader.get_stream_data(self.stream, [0, 2], (i0 + 0.5) / FS, (i1 + 0.5) / FS)
+        np.testing.assert_allclose(psd["magnitude"], compute_psd(raw, FS, nperseg=2048)[1])
+        fft, _ = self._run(make("fft"))
+        np.testing.assert_allclose(fft["result"]["magnitude"], compute_fft(raw, FS)[1])
+        car = FilterConfig(FilterType.CAR, channel_groups=[[0, 1, 2]])
+        out, _ = self._run(make("psd", [car]))  # CAR needs all channels: no longer skipped
+        self.assertFalse(np.allclose(out["result"]["magnitude"], psd["magnitude"], rtol=0.01, atol=0))
+        self.assertEqual(out["result"]["warnings"], [])
 
     def test_export_removes_its_file_when_cancelled_or_failed(self):
         path = os.path.join(self.tmp, "out.i16")

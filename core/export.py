@@ -74,10 +74,11 @@ def iter_processed_chunks(
     pad_s: float = 1.0,
     left_overlap: int = 0,
     with_mask: bool = False,
+    warnings: Optional[List[str]] = None,
 ):
     """
     Yield [i_start, i_stop) of the given channels in processed chunks, the same way
-    everywhere (export, spike detection):
+    everywhere (export, spike detection, analysis):
 
         blanking (if blank_results) -> filter chain (if filters, CAR/CMR loads all channels)
 
@@ -88,6 +89,9 @@ def iter_processed_chunks(
         data: (len(channels), lo + b - a) float array, where lo = min(left_overlap, a - i_start)
               extra samples before a are included (e.g. so a crossing at a can be detected).
         mask: same shape, True where samples are blanked (None unless with_mask).
+
+    warnings: if given, the filter chain's warnings (e.g. a skipped filter) are added to it,
+    each once.
     """
     from dsp.blanking import blank_mask
 
@@ -110,13 +114,15 @@ def iter_processed_chunks(
         if blank_results:
             data = apply_blanking(data, time_axis, load_channels, blank_results)
         if filters:
-            out, _, _ = apply_filter_chain(
+            out, _, chain_warnings = apply_filter_chain(
                 data[rows], filters, fs,
                 all_channel_data=data if needs_all else None,
                 channel_indices=channels,
                 with_vrms=False,
                 inplace_ok=True,  # this chunk's arrays are ours; nothing reads them afterwards
             )
+            if warnings is not None:
+                warnings += [w for w in chain_warnings if w not in warnings]
         else:
             out = data[rows]
 

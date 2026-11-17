@@ -44,8 +44,8 @@ from core.workers import (
     SpikeDetectWorker,
 )
 from models import StreamState, ChannelMode, NUMBER_BY_ELECTRODE, NUMBER_BY_CHANNEL
-from dsp import apply_filter_chain, decimate_for_display
-from dsp.blanking import apply_blanking, basic_result, blank_spans
+from dsp import decimate_for_display
+from dsp.blanking import basic_result, blank_spans
 from dsp.metrics import compute_vrms
 from dsp.spikes import robust_sigma, NEGATIVE, POSITIVE, BOTH
 from models.blanking import ADVANCED
@@ -107,6 +107,10 @@ class MainWindow(QMainWindow):
 
     # Longest view by default (user setting: Channels → View Range → Max length)
     DEFAULT_MAX_VIEW_S = 20.0
+
+    # Largest Analyze interval, in channels × samples (3e7 float64 = 240 MB; FFT/PSD run one
+    # channel at a time): 1 channel → 1000 s, 8 channels → 125 s at 30 kHz
+    MAX_ANALYSIS_SAMPLES = 3e7
 
     # A user-driven move outside the buffer waits this long for the next one before loading
     MISS_DEBOUNCE_MS = 80
@@ -816,80 +820,58 @@ class MainWindow(QMainWindow):
 
     @Slot(dict)
     def _on_analyze_requested(self, params: dict):
-        """Handle spectrum analysis request."""
+        """FFT / PSD of an interval, blanked and filtered like Export (runs in the background)."""
         state = self._app_state.get_current_state()
         if not state or self._app_state.block is None:
             return
-
-        # Show progress
-        progress = progress_dialog("Computing spectrum...", self)
-        progress.show()
-
-        try:
-            # Load data for analysis interval
-            data, time_axis = self._app_state.reader.get_stream_data(
-                state.stream_name,
-                channels=params["channels"],
-                start_time=params["start"],
-                end_time=params["end"],
+        fs = state.sample_rate
+        channels = [c for c in params["channels"] if 0 <= c < state.num_channels]
+        if not channels:
+            QMessageBox.information(self, "No Channels", "Select at least one channel to analyze.")
+            return
+        n_stream = int(round(state.duration * fs))
+        i_start = min(n_stream, max(0, int(round(params["start"] * fs))))
+        i_stop = min(n_stream, max(0, int(round(params["end"] * fs))))
+        need = params["nperseg"] if params["method"] == "psd" else 2
+        if i_stop - i_start < need:
+            QMessageBox.information(
+                self, "Interval Too Short",
+                f"The interval must be at least {need / fs:.3f} s long"
+                + (" (one PSD segment)" if params["method"] == "psd" else "")
+                + f" and inside the recording (0–{state.duration:.1f} s).",
             )
-
-            # Blank stimulation artifacts, then apply filters if any
-            data = self._blank(data, time_axis, params["channels"], state.stream_name)
-            if state.filters and not state.global_bypass:
-                data, _, _ = apply_filter_chain(
-                    data, state.filters, state.sample_rate, state.global_bypass
-                )
-
-            progress.setValue(50)
-
-            # Compute spectrum
-            worker = SpectralWorker(
-                data,
-                state.sample_rate,
-                method=params["method"],
-                channels=list(range(data.shape[0])) if data.ndim > 1 else [0],
-                nperseg=params["nperseg"],
-                overlap=params["overlap"],
+            return
+        max_s = self.MAX_ANALYSIS_SAMPLES / len(channels) / fs
+        if i_stop - i_start > max_s * fs:
+            QMessageBox.information(
+                self, "Interval Too Long",
+                f"With {len(channels)} channel{'s' if len(channels) != 1 else ''}, at most {max_s:.0f} s can be "
+                f"analyzed at once; this interval is {(i_stop - i_start) / fs:.0f} s. "
+                "Shorten it or select fewer channels.",
             )
+            return
 
-            # Run synchronously for simplicity
-            if params["method"] == "fft":
-                from dsp import compute_fft
-                freqs, magnitude = compute_fft(data, state.sample_rate)
-            else:
-                from dsp import compute_psd
-                freqs, magnitude = compute_psd(
-                    data,
-                    state.sample_rate,
-                    nperseg=params["nperseg"],
-                    overlap=params["overlap"],
-                )
+        active_filters = [] if state.global_bypass else [f for f in state.filters if not f.bypassed]
+        worker = SpectralWorker(
+            self._app_state.reader, state.stream_name, channels, i_start, i_stop, fs,
+            state.num_channels, self._app_state.active_blanking(state.stream_name),
+            copy.deepcopy(active_filters), params["method"], params["nperseg"], params["overlap"],
+        )
 
-            progress.setValue(100)
-
-            # Display result
+        def done(result):
             self._spectrum_plot.set_data(
-                freqs,
-                magnitude,
-                params["channels"],
-                method=params["method"],
-                channel_names=[state.channel_label(c) for c in params["channels"]],
+                result["freqs"], result["magnitude"], channels, method=params["method"],
+                channel_names=[state.channel_label(c) for c in channels],
             )
-
-            # Switch to spectrum tab
             self._plot_tabs.setCurrentWidget(self._spectrum_plot)
+            self._show_job_warnings(result["warnings"])
 
-        except Exception as e:
-            QMessageBox.warning(
-                self,
-                "Analysis Error",
-                f"Failed to compute spectrum:\n\n{e}",
-            )
+        self._run_job("analysis", worker, "Computing spectrum...", done, "Failed to compute spectrum")
 
-        finally:
-            progress.close()
-            progress.deleteLater()
+    def _show_job_warnings(self, warnings: list):
+        """Filter warnings from a chunked job (e.g. a filter skipped for the whole run)."""
+        if warnings:
+            self._toast.show_message("Filter warning: " + "; ".join(warnings), WARNING)
 
     def _refresh_plot(self):
         """Refresh the time series plot, using the in-memory buffer when possible."""
@@ -1787,13 +1769,6 @@ class MainWindow(QMainWindow):
         self._spike_panel.set_k(level / self._sigma_selected)
 
     # ------------------------------------------------------------------ blanking
-
-    def _blank(self, data, time_axis, channels, stream_name):
-        """Data with this stream's applied blanking interpolated across (unchanged if none)."""
-        results = self._app_state.active_blanking(stream_name)
-        if not results or data is None or time_axis is None:
-            return data
-        return apply_blanking(data, time_axis, channels, results)
 
     def _blanking_summary_lines(self, stream_name: str) -> list:
         results = self._app_state.active_blanking(stream_name)
