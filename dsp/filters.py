@@ -76,32 +76,49 @@ def design_filter(config: FilterConfig, fs: float) -> Optional[np.ndarray]:
         return None
 
 
-def apply_filter(data: np.ndarray, sos: np.ndarray) -> np.ndarray:
+def apply_filter(data: np.ndarray, sos: np.ndarray, inplace: bool = False) -> np.ndarray:
     """
     Apply SOS filter using zero-phase filtering.
 
     Args:
         data: Input data (1D or 2D with channels as rows)
         sos: SOS coefficients
+        inplace: Write the result back into ``data`` (float64 only) instead of allocating
+                 another full-size array; the filter chain uses this on arrays it owns.
 
     Returns:
         Filtered data with same shape as input
     """
+    inplace = inplace and data.dtype == np.float64
     if data.ndim == 1:
-        return signal.sosfiltfilt(sos, data)
+        out = signal.sosfiltfilt(sos, data)
+        if inplace:
+            data[...] = out
+            return data
+        return out
     # scipy's filtering releases the GIL, so blocks of channels run in parallel threads;
     # results are identical to filtering each channel on its own.
     n_threads = min(_FILTER_THREADS, data.shape[0])
     if n_threads <= 1 or data.size < 200_000:
-        return signal.sosfiltfilt(sos, data, axis=-1)
-    result = np.empty(data.shape, dtype=np.result_type(data.dtype, np.float64))
+        out = signal.sosfiltfilt(sos, data, axis=-1)
+        if inplace:
+            data[...] = out
+            return data
+        return out
+    result = data if inplace else np.empty(data.shape, dtype=np.result_type(data.dtype, np.float64))
 
     def run(rows: slice):
+        # Each block is filtered into a temporary first, so writing back into `data` is safe
         result[rows] = signal.sosfiltfilt(sos, data[rows], axis=-1)  # slices are views, not copies
 
-    edges = np.linspace(0, data.shape[0], n_threads + 1).astype(int)
+    # Small blocks: sosfiltfilt holds about 3 temporaries of its input, so the blocks in
+    # flight (n_threads at a time) set the peak memory. 2-row blocks on 136 channels keep it
+    # near 0.3x the array instead of 3x, for ~50% more time (0.23 s vs 0.15 s on a 30 s buffer).
+    rows_per_block = max(1, data.shape[0] // (n_threads * 8))
+    blocks = [slice(a, min(a + rows_per_block, data.shape[0]))
+              for a in range(0, data.shape[0], rows_per_block)]
     with ThreadPoolExecutor(n_threads) as pool:
-        list(pool.map(run, [slice(a, b) for a, b in zip(edges[:-1], edges[1:])]))
+        list(pool.map(run, blocks))
     return result
 
 
@@ -112,6 +129,8 @@ def apply_filter_chain(
     global_bypass: bool = False,
     all_channel_data: Optional[np.ndarray] = None,
     channel_indices: Optional[List[int]] = None,
+    with_vrms: bool = True,
+    inplace_ok: bool = False,
 ) -> Tuple[np.ndarray, List[str], Dict[int, float]]:
     """
     Apply ordered filter chain to data.
@@ -122,13 +141,19 @@ def apply_filter_chain(
         fs: Sampling frequency.
         global_bypass: If True, skip all filtering.
         all_channel_data: Full array with ALL channels loaded (required for CAR/CMR).
-                          Shape (total_n_channels, n_samples).
-        channel_indices: 0-indexed channel indices corresponding to rows of ``data``.
-                         Required for CAR/CMR to map back after re-referencing.
+                          Shape (total_n_channels, n_samples). When given, the whole chain
+                          runs on it, so filters placed before a CAR/CMR feed into it and
+                          filters after it see the re-referenced data.
+        channel_indices: 0-indexed channel indices corresponding to rows of ``data``
+                         (and the rows of ``all_channel_data`` to return).
+        with_vrms: Also compute Vrms of the output per channel (skip in chunked jobs).
+        inplace_ok: The array the chain starts from (``all_channel_data`` if given, else
+                    ``data``) is a scratch copy the caller no longer needs, so the chain may
+                    filter it in place instead of making its own copy.
 
     Returns:
-        Tuple of (filtered_data, warnings, vrms_dict).
-        vrms_dict is computed on the filtered output (whole buffer).
+        Tuple of (filtered_data, warnings, vrms_dict). The inputs are not modified unless
+        ``inplace_ok`` is set.
     """
     warnings: List[str] = []
 
@@ -141,37 +166,29 @@ def apply_filter_chain(
     if channel_indices is None:
         channel_indices = list(range(data.shape[0]))
 
-    if global_bypass or not filters or all(f.bypassed for f in filters):
-        vrms = compute_vrms(data, channel_indices)
+    active = [] if global_bypass else [f for f in filters if not f.bypassed]
+    if not active:
         out = data.copy()
+        vrms = compute_vrms(out, channel_indices) if with_vrms else {}
         return (out[0] if was_1d else out), warnings, vrms
 
-    result = data.copy()
+    # `work` starts as the caller's array; the first filter that runs makes our own copy
+    # (owned), and every later filter modifies that copy in place.
+    uses_all = all_channel_data is not None
+    work = all_channel_data if uses_all else data
+    owned = inplace_ok
 
-    # Keep a mutable copy of all-channel data for CAR/CMR updates
-    all_data = all_channel_data.copy() if all_channel_data is not None else None
-
-    for filt in filters:
-        if filt.bypassed:
-            continue
-
+    for filt in active:
         if filt.filter_type in (FilterType.CAR, FilterType.CMR):
-            if all_data is None:
+            if not uses_all:
                 warnings.append(
                     f"{filt.get_display_name()}: requires all channels loaded"
                 )
                 continue
-
-            if filt.filter_type == FilterType.CAR:
-                all_data, w = apply_car(all_data, filt.channel_groups)
-            else:
-                all_data, w = apply_cmr(all_data, filt.channel_groups)
+            reference = apply_car if filt.filter_type == FilterType.CAR else apply_cmr
+            work, w = reference(work, filt.channel_groups, copy=not owned)
             warnings.extend(w)
-
-            # Extract displayed channels from updated all-channel array
-            for i, ch_idx in enumerate(channel_indices):
-                if ch_idx < all_data.shape[0]:
-                    result[i] = all_data[ch_idx]
+            owned = True
 
         else:
             # Standard SOS filter
@@ -184,11 +201,26 @@ def apply_filter_chain(
                 continue
 
             try:
-                result = apply_filter(result, sos)
+                work = apply_filter(work, sos, inplace=owned)
+                owned = True
             except Exception as e:
                 warnings.append(f"Filter '{filt.get_display_name()}' failed: {e}")
 
-    vrms_dict = compute_vrms(result, channel_indices)
+    if uses_all:
+        # Pick the displayed rows out of the all-channel result
+        rows = [c for c in channel_indices if 0 <= c < work.shape[0]]
+        if len(rows) == len(channel_indices):
+            result = work[rows]
+        else:
+            warnings.append("Some displayed channels are outside the loaded data")
+            result = data.copy()
+            for i, c in enumerate(channel_indices):
+                if 0 <= c < work.shape[0]:
+                    result[i] = work[c]
+    else:
+        result = work if owned else data.copy()
+
+    vrms_dict = compute_vrms(result, channel_indices) if with_vrms else {}
 
     out = result[0] if was_1d else result
     return out, warnings, vrms_dict

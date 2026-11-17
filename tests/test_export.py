@@ -71,6 +71,7 @@ class TestExport(unittest.TestCase):
             ("raw", {}),
             ("blanked", {"blank_results": [self.blank]}),
             ("blanked+filtered", {"blank_results": [self.blank], "filters": filters}),
+            ("HP before CAR", {"filters": [filters[1], filters[0]]}),
         ]:
             whole, _ = self._export(f"{name}_whole.bin", chunk_s=100.0, **kw)
             chunked, _ = self._export(f"{name}_chunked.bin", chunk_s=0.3, pad_s=0.2, **kw)

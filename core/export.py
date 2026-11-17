@@ -113,6 +113,8 @@ def iter_processed_chunks(
                 data[rows], filters, fs,
                 all_channel_data=data if needs_all else None,
                 channel_indices=channels,
+                with_vrms=False,
+                inplace_ok=True,  # this chunk's arrays are ours; nothing reads them afterwards
             )
         else:
             out = data[rows]
@@ -175,12 +177,15 @@ def export_binary(
             if cancelled is not None and cancelled():
                 return {"n_samples": a - i_start, "n_clipped": n_clipped, "cancelled": True}
 
-            out = out * scale
+            # `out` is the pipeline's own array (never the reader's), so work in place
+            np.multiply(out, scale, out=out)
             n_clipped += int(np.count_nonzero((out < INT16_MIN) | (out > INT16_MAX)))
-            chunk = np.clip(np.rint(out), INT16_MIN, INT16_MAX).astype(np.int16)
+            np.rint(out, out=out)
+            np.clip(out, INT16_MIN, INT16_MAX, out=out)
+            chunk = out.astype(np.int16)
 
             if interlaced is not None:
-                interlaced.write(np.ascontiguousarray(chunk.T).tobytes())
+                chunk.T.tofile(interlaced)  # written in C order of the transpose: interlaced
             else:
                 sequential[:, a - i_start: a - i_start + chunk.shape[1]] = chunk
 

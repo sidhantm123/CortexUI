@@ -58,6 +58,13 @@ class TestInterpolation(unittest.TestCase):
         np.testing.assert_array_equal(out[0], self.x[0])
         self.assertLess(np.abs(out[1, 400:500]).max(), 2)
 
+    def test_no_overlap_returns_the_input_itself(self):
+        # Nothing to blank in this buffer: no copy (the all-channel CAR buffer is ~1 GB)
+        out = apply_blanking(self.x, self.t, [0, 1], [result([0], [[5.0]], [[5.1]])])
+        self.assertIs(out, self.x)
+        out = apply_blanking(self.x, self.t, [7], [result([0], [[0.4]], [[0.499]])])  # channel not in buffer
+        self.assertIs(out, self.x)
+
     def test_blank_mask_matches_interpolated_samples(self):
         res = result([0], [[0.4]], [[0.499]])
         mask = blank_mask(self.t, [0, 1], [res])

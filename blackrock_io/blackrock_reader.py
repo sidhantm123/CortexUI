@@ -248,11 +248,13 @@ class BlackrockReader:
         except Exception as e:
             raise ValueError(f"Failed to read stream data: {e}")
 
-        # neo returns (samples, channels) in the file's units; convert to (channels, samples) volts
-        data = (data * stream.to_volts[valid_channels]).T
+        # neo returns a fresh float64 (samples, channels) array in the file's units; scale it
+        # in place, then make the (channels, samples) transpose contiguous (one copy, not two)
+        data *= stream.to_volts[valid_channels]
+        data = np.ascontiguousarray(data.T)
         time_axis = (i_start + np.arange(data.shape[1])) / fs
 
-        return np.ascontiguousarray(data), time_axis
+        return data, time_axis
 
     def get_block_info(self) -> Optional[RecordingBlock]:
         """Return current block info."""

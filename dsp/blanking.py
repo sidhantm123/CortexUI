@@ -131,18 +131,19 @@ def apply_blanking(
     results: Iterable[BlankResult],
 ) -> np.ndarray:
     """
-    Return a copy of data (rows = channel_indices) with every blank interval that overlaps
-    this buffer interpolated across. Intervals cut by the buffer edge hold the edge value.
+    Return a float copy of data (rows = channel_indices) with every blank interval that
+    overlaps this buffer interpolated across. Intervals cut by the buffer edge hold the
+    edge value. When no interval overlaps, ``data`` itself is returned (no copy).
     """
-    out = np.array(data, dtype=float, copy=True)
-    was_1d = out.ndim == 1
-    if was_1d:
-        out = out.reshape(1, -1)
-    if out.shape[1] == 0:
-        return out[0] if was_1d else out
+    data = np.asarray(data)
+    n_samples = data.shape[-1] if data.ndim else 0
+    if n_samples == 0:
+        return data
 
+    # Collect the gaps first, so a buffer with nothing to blank costs no copy
     t0, t1 = time_axis[0], time_axis[-1]
     row_of = {ch: i for i, ch in enumerate(channel_indices)}
+    gaps = []  # (row, i0, i1, interpolation)
     for res in results:
         if res.start_s.size == 0:
             continue
@@ -151,12 +152,21 @@ def apply_blanking(
             if row is None:
                 continue
             starts, ends = res.start_s[:, col], res.end_s[:, col]
-            for s, e in zip(starts[(ends >= t0) & (starts <= t1)], ends[(ends >= t0) & (starts <= t1)]):
+            keep = (ends >= t0) & (starts <= t1)
+            for s, e in zip(starts[keep], ends[keep]):
                 i0 = int(np.searchsorted(time_axis, s, side="left"))
                 i1 = int(np.searchsorted(time_axis, e, side="right"))
                 if i1 > i0:
-                    _fill_gap(out[row], i0, i1, res.interpolation)
+                    gaps.append((row, i0, i1, res.interpolation))
+    if not gaps:
+        return data
 
+    out = np.array(data, dtype=float, copy=True)
+    was_1d = out.ndim == 1
+    if was_1d:
+        out = out.reshape(1, -1)
+    for row, i0, i1, interpolation in gaps:
+        _fill_gap(out[row], i0, i1, interpolation)
     return out[0] if was_1d else out
 
 

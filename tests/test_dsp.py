@@ -365,6 +365,13 @@ class TestCAR(unittest.TestCase):
         _, warnings = apply_car(data, groups)
         self.assertEqual(len(warnings), 1)
 
+    def test_car_in_place(self):
+        """copy=False re-references the array itself (the filter chain uses this on its own copy)."""
+        data = np.array([[1.0, 2.0], [3.0, 4.0]])
+        result, _ = apply_car(data, [[0, 1]], copy=False)
+        self.assertIs(result, data)
+        np.testing.assert_allclose(data, [[-1.0, -1.0], [1.0, 1.0]])
+
 
 class TestCMR(unittest.TestCase):
     """Test Common Median Reference."""
@@ -463,6 +470,53 @@ class TestMixedFilterChain(unittest.TestCase):
         self.assertEqual(len(vrms), 2)
         # Warnings should be empty for valid chain
         self.assertEqual(len(warnings), 0)
+
+    @staticmethod
+    def _chain_case():
+        fs = 24000
+        t = np.arange(24000) / fs
+        rng = np.random.default_rng(0)
+        shared = 3.0 * np.sin(2 * np.pi * 5 * t)  # low-frequency signal common to every channel
+        data = shared + rng.normal(0, 1.0, (4, t.size))
+        bp = FilterConfig(FilterType.BANDPASS, cutoff_low=50, cutoff_high=200, order=2)
+        return fs, data, bp
+
+    def test_bandpass_before_car_is_applied(self):
+        """A filter placed before CAR stays in the output (it used to be silently dropped)."""
+        from dsp.filters import apply_filter, design_filter
+
+        fs, data, bp = self._chain_case()
+        car = FilterConfig(FilterType.CAR, channel_groups=[[0, 1, 2, 3]])
+        expected, _ = apply_car(apply_filter(data, design_filter(bp, fs)), [[0, 1, 2, 3]])
+        for chain in ([bp, car], [car, bp]):  # CAR commutes with linear filters
+            out, warnings, _ = apply_filter_chain(
+                data[[1, 3]], chain, fs, all_channel_data=data, channel_indices=[1, 3]
+            )
+            self.assertEqual(warnings, [])
+            np.testing.assert_allclose(out, expected[[1, 3]], atol=1e-9)
+
+    def test_bandpass_before_cmr_is_applied(self):
+        from dsp.filters import apply_filter, design_filter
+
+        fs, data, bp = self._chain_case()
+        cmr = FilterConfig(FilterType.CMR, channel_groups=[[0, 1, 2, 3]])
+        expected, _ = apply_cmr(apply_filter(data, design_filter(bp, fs)), [[0, 1, 2, 3]])
+        out, warnings, _ = apply_filter_chain(
+            data[[0, 2]], [bp, cmr], fs, all_channel_data=data, channel_indices=[0, 2]
+        )
+        self.assertEqual(warnings, [])
+        np.testing.assert_allclose(out, expected[[0, 2]], atol=1e-9)
+
+    def test_inputs_are_not_modified(self):
+        """The chain filters in place on its own copies only, never on the caller's arrays."""
+        fs, data, bp = self._chain_case()
+        car = FilterConfig(FilterType.CAR, channel_groups=[[0, 1, 2, 3]])
+        displayed = data[:2].copy()
+        before, before_all = displayed.copy(), data.copy()
+        apply_filter_chain(displayed, [bp, car, bp], fs, all_channel_data=data, channel_indices=[0, 1])
+        apply_filter_chain(displayed, [bp, bp], fs, channel_indices=[0, 1])
+        np.testing.assert_array_equal(displayed, before)
+        np.testing.assert_array_equal(data, before_all)
 
 
 class TestNewFilterConfigSerialization(unittest.TestCase):

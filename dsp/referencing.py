@@ -3,9 +3,25 @@ from typing import List, Tuple
 import numpy as np
 
 
+def _valid_groups(channel_groups: List[List[int]], n_channels: int, name: str):
+    """Yield (group index, unique valid channels) per group, warning about groups under 2."""
+    warnings = []
+    groups = []
+    for group_idx, group in enumerate(channel_groups):
+        valid = list(dict.fromkeys(ch for ch in group if 0 <= ch < n_channels))
+        if len(valid) < 2:
+            warnings.append(
+                f"{name} group {group_idx + 1}: need >= 2 valid channels, got {len(valid)}"
+            )
+            continue
+        groups.append(valid)
+    return groups, warnings
+
+
 def apply_car(
     data: np.ndarray,
     channel_groups: List[List[int]],
+    copy: bool = True,
 ) -> Tuple[np.ndarray, List[str]]:
     """
     Apply Common Average Reference.
@@ -17,30 +33,29 @@ def apply_car(
         data: Shape (n_channels, n_samples). All channels must be present.
         channel_groups: List of groups, each a list of 0-indexed channel indices.
                         Channels not in any group are left unchanged.
+        copy: Work on a copy (default). With False, ``data`` is re-referenced in place.
 
     Returns:
-        (re-referenced data copy, warnings)
+        (re-referenced data, warnings)
     """
-    warnings = []
-    result = data.copy()
-    n_channels = data.shape[0]
-
-    for group_idx, group in enumerate(channel_groups):
-        valid = [ch for ch in group if 0 <= ch < n_channels]
-        if len(valid) < 2:
-            warnings.append(
-                f"CAR group {group_idx + 1}: need >= 2 valid channels, got {len(valid)}"
-            )
-            continue
-        group_mean = np.mean(result[valid, :], axis=0)
-        result[valid, :] -= group_mean
-
+    result = data.copy() if copy else data
+    groups, warnings = _valid_groups(channel_groups, data.shape[0], "CAR")
+    acc_dtype = np.result_type(result.dtype, np.float64)
+    for valid in groups:
+        # Row by row: no group-sized temporaries (a group can be the whole array)
+        mean = np.zeros(result.shape[1], dtype=acc_dtype)
+        for ch in valid:
+            mean += result[ch]
+        mean /= len(valid)
+        for ch in valid:
+            result[ch] -= mean
     return result, warnings
 
 
 def apply_cmr(
     data: np.ndarray,
     channel_groups: List[List[int]],
+    copy: bool = True,
 ) -> Tuple[np.ndarray, List[str]]:
     """
     Apply Common Median Reference.
@@ -50,22 +65,18 @@ def apply_cmr(
     Args:
         data: Shape (n_channels, n_samples). All channels must be present.
         channel_groups: List of groups, each a list of 0-indexed channel indices.
+        copy: Work on a copy (default). With False, ``data`` is re-referenced in place.
 
     Returns:
-        (re-referenced data copy, warnings)
+        (re-referenced data, warnings)
     """
-    warnings = []
-    result = data.copy()
-    n_channels = data.shape[0]
-
-    for group_idx, group in enumerate(channel_groups):
-        valid = [ch for ch in group if 0 <= ch < n_channels]
-        if len(valid) < 2:
-            warnings.append(
-                f"CMR group {group_idx + 1}: need >= 2 valid channels, got {len(valid)}"
-            )
-            continue
-        group_median = np.median(result[valid, :], axis=0)
-        result[valid, :] -= group_median
-
+    result = data.copy() if copy else data
+    groups, warnings = _valid_groups(channel_groups, data.shape[0], "CMR")
+    for valid in groups:
+        # The median needs the group stacked: one temporary, consumed by the median itself
+        stacked = result[valid]
+        median = np.median(stacked, axis=0, overwrite_input=True)
+        del stacked
+        for ch in valid:
+            result[ch] -= median
     return result, warnings

@@ -713,14 +713,7 @@ class MainWindow(QMainWindow):
         """Handle filter chain change."""
         self._on_spike_inputs_changed()
         state = self._app_state.get_current_state()
-        needs_all = (
-            state is not None
-            and not state.global_bypass
-            and any(
-                f.filter_type in (FilterType.CAR, FilterType.CMR) and not f.bypassed
-                for f in state.filters
-            )
-        )
+        needs_all = state is not None and self._chain_needs_all(state)
         # If CAR/CMR is now active but we only have the displayed-channel buffer
         # (raw_data_all is None), we need a full reload to get all channels.
         if needs_all and self._raw_data_all is None:
@@ -827,12 +820,15 @@ class MainWindow(QMainWindow):
         # The view moved within the already-loaded + filtered buffer.
         # Just re-slice and re-decimate — no disk I/O, no re-filtering (~5 ms).
         # Filters are re-applied by _on_filters_changed when the chain changes.
+        # A CAR/CMR that was just added needs the all-channel buffer, so that is a miss.
+        needs_all = self._chain_needs_all(state)
         if (
             self._filtered_data is not None
             and self._raw_time is not None
             and channels == self._buffer_channels
             and start >= self._buffer_start
             and end <= self._buffer_end
+            and (not needs_all or self._raw_data_all is not None)
         ):
             self._rerender_from_buffer(start, end, state)
             return
@@ -843,11 +839,6 @@ class MainWindow(QMainWindow):
         view_dur = max(end - start, 1.0)
         buf_start = max(0.0, start - view_dur)
         buf_end = min(state.duration, end + view_dur)
-
-        needs_all = any(
-            f.filter_type in (FilterType.CAR, FilterType.CMR) and not f.bypassed
-            for f in state.filters
-        ) and not state.global_bypass
 
         # When CAR/CMR is active we must load all channels for referencing
         load_channels = list(range(state.num_channels)) if needs_all else channels
@@ -965,6 +956,14 @@ class MainWindow(QMainWindow):
             self._last_plot_channels = channels
             self._last_scatter_mode = scatter
 
+    @staticmethod
+    def _chain_needs_all(state) -> bool:
+        """True when an active CAR/CMR filter needs every channel of the stream loaded."""
+        return not state.global_bypass and any(
+            f.filter_type in (FilterType.CAR, FilterType.CMR) and not f.bypassed
+            for f in state.filters
+        )
+
     def _apply_filters(self):
         """Apply filter chain to the loaded buffer, then render the current view."""
         state = self._app_state.get_current_state()
@@ -973,22 +972,32 @@ class MainWindow(QMainWindow):
 
         channels = state.get_active_channels()
 
+        # The all-channel buffer (~1 GB for a 10 s view of 136 ch) is only kept while a
+        # CAR/CMR filter needs it
+        needs_all = self._chain_needs_all(state)
+        if not needs_all:
+            self._raw_data_all = None
+
         # Blank stimulation artifacts on copies (the raw buffer is kept, so removing
         # blanking needs no reload), then apply the filter chain (always returns 3-tuple)
         raw = self._blank(self._raw_data, self._raw_time, channels, state.stream_name)
         raw_all = None
-        if self._raw_data_all is not None:
+        if needs_all and self._raw_data_all is not None:
             raw_all = self._blank(
                 self._raw_data_all, self._raw_time, list(range(state.num_channels)), state.stream_name
             )
-        data, warnings, vrms_dict = apply_filter_chain(
+        data, warnings, _ = apply_filter_chain(
             raw,
             state.filters,
             state.sample_rate,
             state.global_bypass,
             all_channel_data=raw_all,
             channel_indices=channels,
+            with_vrms=False,  # the view's RMS is computed per render, blanked samples excluded
+            # A blanked copy is scratch; the raw buffers themselves must stay untouched
+            inplace_ok=(raw_all is not self._raw_data_all) if raw_all is not None else (raw is not self._raw_data),
         )
+        del raw, raw_all
         warning = warnings[0] if warnings else ""
         if warning and warning != self._last_filter_warning:
             self._toast.show_message(f"Filter warning: {warning}", WARNING)
