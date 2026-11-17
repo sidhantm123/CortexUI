@@ -1,5 +1,6 @@
 """Application state management."""
 import json
+import os
 from pathlib import Path
 from typing import Dict, Optional, List, Callable, Tuple
 from dataclasses import dataclass, field
@@ -7,7 +8,7 @@ from dataclasses import dataclass, field
 from models import StreamState
 from models.analog import AnalogAssignment, StimEvent, MODALITY_PRESETS, number_events
 from models.blanking import BlankingSettings, BlankResult
-from models.filter_config import REMOVED_FILTER_TYPES
+from models.filter_config import FilterConfig, FilterType, REMOVED_FILTER_TYPES
 from models.spikes import SpikeResult
 from models.probe import ProbeGeometry
 from models.recording import RecordingBlock
@@ -72,14 +73,17 @@ class AppState:
             RecordingBlock with metadata
 
         Raises:
-            Various exceptions on failure
+            Various exceptions on failure; the current recording then stays loaded.
         """
-        # Clear previous state
-        self.close()
+        # Open the new recording first, with the reader that matches the folder's format:
+        # if that fails, nothing has changed
+        reader = open_reader(folder_path)
+        block = reader.load_block(folder_path, headers_only=False)
 
-        # Load new block with the reader that matches the folder's format
-        self.reader = open_reader(folder_path)
-        self.block = self.reader.load_block(folder_path, headers_only=False)
+        # The probe is loaded independently of the recording (the probe map keeps showing it)
+        probe = self.probe
+        self.close()
+        self.reader, self.block, self.probe = reader, block, probe
 
         # Create stream states
         for name, info in self.block.streams.items():
@@ -249,7 +253,8 @@ class AppState:
 
     def save_session(self, filepath: str):
         """
-        Save current session to JSON file.
+        Save current session to JSON file (written to a temporary file first, so a failed
+        save never leaves a truncated session behind).
 
         Args:
             filepath: Path to save session file
@@ -273,12 +278,44 @@ class AppState:
             "spike_results": [r.to_dict() for r in self.spike_results.values()],
         }
 
-        with open(filepath, "w") as f:
-            json.dump(session, f, indent=2)
+        tmp = filepath + ".tmp"
+        try:
+            with open(tmp, "w") as f:
+                json.dump(session, f, indent=2)
+            os.replace(tmp, filepath)
+        finally:
+            if os.path.exists(tmp):
+                os.remove(tmp)
+
+    @staticmethod
+    def _parse_filters(filter_dicts: list, messages: List[str]) -> List[FilterConfig]:
+        """Saved filters that still exist and are valid; the rest are noted in messages."""
+        known = {t.value for t in FilterType}
+        filters, n_removed, skipped = [], 0, []
+        for d in filter_dicts:
+            kind = d.get("filter_type")
+            if kind in REMOVED_FILTER_TYPES:
+                n_removed += 1
+                continue
+            try:
+                if kind not in known:
+                    raise ValueError("unknown type")
+                filters.append(FilterConfig.from_dict(d))
+            except (KeyError, TypeError, ValueError) as e:
+                skipped.append(f"{kind or '?'} ({e})")
+        if n_removed:
+            messages.append(
+                f"Removed {n_removed} Vrms threshold filter{'s' if n_removed != 1 else ''}: that filter "
+                "no longer exists. Use the Spike Detection tab for thresholding."
+            )
+        if skipped:
+            messages.append("Skipped filters this version can't use: " + ", ".join(skipped) + ".")
+        return filters
 
     def load_session(self, filepath: str):
         """
-        Load session from JSON file.
+        Load session from JSON file. The whole file is read and checked before the
+        recording is opened, so a file that can't be used changes nothing.
 
         Args:
             filepath: Path to session file
@@ -286,33 +323,39 @@ class AppState:
         with open(filepath, "r") as f:
             session = json.load(f)
 
-        # Load the block first
         block_path = session.get("block_path")
         if not block_path or not Path(block_path).exists():
             raise ValueError(f"Block path not found: {block_path}")
 
-        self.load_block(block_path)
-
         # Notes about the session for the user (e.g. settings that no longer exist)
-        self.load_messages = []
+        messages: List[str] = []
+        saved_states = {}
+        for name, state_dict in session.get("stream_states", {}).items():
+            filters = self._parse_filters(state_dict.get("filters", []), messages)
+            saved = StreamState.from_dict(dict(state_dict, filters=[]))
+            saved.filters = filters
+            saved_states[name] = (state_dict, saved)
+        assignments = [AnalogAssignment.from_dict(d) for d in session.get("analog_assignments", [])]
+        events = [StimEvent.from_dict(d) for d in session.get("events", [])]
+        blanking_settings = {
+            m: BlankingSettings.from_dict(d) for m, d in session.get("blanking_settings", {}).items()
+        }
+        blanking_results = [BlankResult.from_dict(d) for d in session.get("blanking_results", [])]
+        spike_results = [SpikeResult.from_dict(d) for d in session.get("spike_results", [])]
+        probe = None
+        if session.get("probe"):
+            try:
+                probe = ProbeGeometry.from_probeinterface_dict(session["probe"])
+            except Exception as e:
+                messages.append(f"The saved probe geometry could not be read ({e}); it was not restored.")
+
+        self.load_block(block_path)
+        self.load_messages = messages
 
         # Restore stream states
-        saved_states = session.get("stream_states", {})
-        n_removed = sum(
-            1
-            for state_dict in saved_states.values()
-            for f in state_dict.get("filters", [])
-            if f.get("filter_type") in REMOVED_FILTER_TYPES
-        )
-        if n_removed:
-            self.load_messages.append(
-                f"Removed {n_removed} Vrms threshold filter{'s' if n_removed != 1 else ''}: that filter "
-                "no longer exists. Use the Spike Detection tab for thresholding."
-            )
-        for name, state_dict in saved_states.items():
+        for name, (state_dict, saved) in saved_states.items():
             if name in self.stream_states:
                 # Merge saved state into loaded state
-                saved = StreamState.from_dict(state_dict)
                 current = self.stream_states[name]
 
                 # Copy over user settings, keep hardware info from actual data
@@ -343,38 +386,24 @@ class AppState:
 
         # Restore analog assignments and detected events
         self.custom_modalities = list(session.get("custom_modalities", []))
-        for a_dict in session.get("analog_assignments", []):
-            a = AnalogAssignment.from_dict(a_dict)
+        for a in assignments:
             state = self.stream_states.get(a.stream)
             if state is not None and a.channel in state.analog_channels:
                 self.analog_assignments[(a.stream, a.channel)] = a
-        self.events = [
-            e for e in (StimEvent.from_dict(d) for d in session.get("events", []))
-            if (e.stream, e.channel) in self.analog_assignments
-        ]
+        self.events = [e for e in events if (e.stream, e.channel) in self.analog_assignments]
 
         # Restore blanking settings and results (results only for streams that still exist)
-        self.blanking_settings = {
-            m: BlankingSettings.from_dict(d)
-            for m, d in session.get("blanking_settings", {}).items()
-        }
-        for r_dict in session.get("blanking_results", []):
-            res = BlankResult.from_dict(r_dict)
+        self.blanking_settings = blanking_settings
+        for res in blanking_results:
             if res.stream in self.stream_states:
                 self.blanking_results[res.modality] = res
 
-        for r_dict in session.get("spike_results", []):
-            res = SpikeResult.from_dict(r_dict)
+        for res in spike_results:
             if res.stream in self.stream_states:
                 self.spike_results[res.stream] = res
 
-        # Restore probe geometry (optional — missing key or None is fine)
-        probe_dict = session.get("probe")
-        if probe_dict:
-            try:
-                self.probe = ProbeGeometry.from_probeinterface_dict(probe_dict)
-            except Exception:
-                self.probe = None
+        if probe is not None:
+            self.probe = probe
 
         # Restore selection
         if session.get("current_stream") in self.stream_states:

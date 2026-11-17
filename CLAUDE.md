@@ -11,8 +11,8 @@ delete details that the code or git history already records.
 | | |
 |---|---|
 | Active branch | `NSP_Basic` (not pushed; branched from `main` @ `beb2da4`) |
-| Last commit | `98f5b1f` Freeze sigma in chunks and free each pipeline chunk before the next read |
-| Tests | 140 passing: `tdtgui/bin/python -m unittest discover tests` |
+| Last commit | `7899b48` Keep rendering fully blanked views; stop rebuilding plot items every frame |
+| Tests | 145 passing: `tdtgui/bin/python -m unittest discover tests` |
 | Next step | Audit steps 4–11 run back to back (user request, 2026-11-17); then the user tests them together |
 
 ### Done
@@ -87,12 +87,17 @@ delete details that the code or git history already records.
     (0–10 % of Detect Spikes). The chunk pipeline frees each chunk before reading the next (two were alive at
     once). RP01, 128 ch, BP 250–5000: 20 s view + CAR peak 2.75 → 1.11 GB numpy, 10 s BP 0.87 → 0.61 GB; σ
     identical to 1e-7.
-18. Audit step 5 (render path): a fully blanked view (NaN RMS) with a probe map loaded made the probe map raise,
+18. (`7899b48`) Audit step 5 (render path): a fully blanked view (NaN RMS) with a probe map loaded made the probe map raise,
     which discarded every load in that view (frozen trace, "Could not process" toast); NaN is now "no data" and
     the probe map updates after the trace. Blank shading reuses its items and skips unchanged spans; analog
     markers and raster bands rebuild only when the events in view change; the probe map doesn't rebuild while
     hidden. Min/max decimation now draws the last samples of a view. Rerender 13 → 8 ms (18 → 8 ms with the
     probe tab shown); what remains of a pan step is pyqtgraph painting the axes.
+19. Audit step 6 (failed Open / session): `AppState.load_block` opens the new recording before closing the old
+    one, so a failed Open changes nothing (it used to empty the state under the old panels); the probe is kept
+    across recordings, as the UI already showed. `load_session` parses the whole file before opening the
+    recording; unknown or invalid saved filters are skipped with a `load_messages` note (one used to abort the
+    session). `save_session` writes a `.tmp` file and renames it.
 
 ### Branches
 - **`main`:** the TDT/Blackrock viewer with filters, FFT/PSD, probe map, export and `.ccf` info.
@@ -358,11 +363,8 @@ tests/                unittest; test_blackrock.py has write_nsx_23() to build sy
 ## 4. Roadmap
 
 ### Audit fixes (plan approved 2026-11-17; one commit per step, the user tests each)
-Findings came from a full audit (execution-verified on RP01 unless noted). Steps 1–5 are done (§1 items 13, 14,
-16–18). Remaining:
-6. **Failed load / session** (`main_window.py`, `app_state.py`): a failed Open empties `AppState` but leaves the old
-   panels, title and buffer (then `ValueError`/`KeyError` on clicks) → load into locals, then `close()`; parse a
-   session fully before `load_block`, tolerate unknown filter types with a `load_messages` note; atomic session save.
+Findings came from a full audit (execution-verified on RP01 unless noted). Steps 1–6 are done (§1 items 13, 14,
+16–19). Remaining:
 7. **Event / assignment consistency** (`app_state.py`, `analog_panel.py`): re-assigning or unassigning an analog
    channel keeps its old-modality events; analog-list edits leave those channels inside CAR groups and the Blanking
    tab un-refreshed; "nan" in an event cell raises; excluded blanking trials keyed by (renumbered) event number.
