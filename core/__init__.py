@@ -1,6 +1,6 @@
 from .app_state import AppState
 from .workers import (
-    DataLoadWorker,
+    BufferLoadWorker,
     FilterWorker,
     SpectralWorker,
     WorkerSignals,
@@ -8,7 +8,7 @@ from .workers import (
 
 __all__ = [
     "AppState",
-    "DataLoadWorker",
+    "BufferLoadWorker",
     "FilterWorker",
     "SpectralWorker",
     "WorkerSignals",

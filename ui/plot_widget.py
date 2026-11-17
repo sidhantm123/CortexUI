@@ -2,7 +2,7 @@
 from typing import List, Optional, Dict, Tuple
 import numpy as np
 
-from PySide6.QtCore import Signal, Qt
+from PySide6.QtCore import Signal, Qt, QEvent, QObject
 from PySide6.QtWidgets import QWidget, QVBoxLayout, QHBoxLayout, QLabel, QStackedWidget
 from PySide6.QtGui import QColor
 
@@ -22,8 +22,12 @@ pg.setConfigOptions(
 TIME_PLOT_HINT = (
     "Scroll: zoom time · Drag: pan · Ctrl/⌘+scroll: zoom amplitude · "
     "Double-click: fit amplitude to the visible data\n"
+    "Trackpad: swipe sideways to pan · swipe up/down or pinch to zoom\n"
     "Keys: ←/→ pan · +/− zoom · ↑/↓ next/previous electrode · [ / ] previous/next event"
 )
+
+# A horizontal mouse-wheel notch (tilt wheel; no pixel delta) pans this many pixels
+_WHEEL_NOTCH_PAN_PX = 40
 
 EMPTY_RECORDING_HINT = "Open a recording folder (⌘O / Ctrl+O)\nor drop one on the window"
 RMS_TOOLTIP = "RMS of the visible data, blanked samples excluded"
@@ -50,13 +54,17 @@ _AMPLITUDE_ZOOM_KEYS = Qt.KeyboardModifier.ControlModifier | Qt.KeyboardModifier
 
 class TimeZoomViewBox(pg.ViewBox):
     """
-    ViewBox for time series: the wheel zooms time only, while y fits the visible data.
+    ViewBox for time series: scrolling zooms time only, while y fits the visible data.
 
-    Ctrl/⌘ + wheel zooms amplitude instead, which turns y auto-fit off until a
-    double-click turns it back on.
+    - Vertical wheel / two-finger vertical swipe: zoom time.
+    - Horizontal wheel / two-finger horizontal swipe: pan time (follows the system's scroll
+      direction setting, like any scroll area).
+    - Pinch (see enable_pinch_zoom): zoom time.
+    - Ctrl/⌘ + vertical scroll zooms amplitude instead, which turns y auto-fit off until a
+      double-click turns it back on.
 
-    set_max_span limits how far out the time axis can zoom (the plot buffer must fit in
-    memory); a wheel zoom-out that stops at that limit emits sigMaxSpanHit.
+    set_max_span limits how far out the time axis can zoom, whatever the input (pyqtgraph
+    enforces it on every range change); a zoom-out that stops at it emits sigMaxSpanHit.
     """
 
     sigMaxSpanHit = Signal()
@@ -79,13 +87,38 @@ class TimeZoomViewBox(pg.ViewBox):
             self.enableAutoRange(axis=pg.ViewBox.YAxis, enable=False)
             ev.accept()
             self.sigRangeChangedManually.emit([False, True])
+        elif ev.orientation() == Qt.Orientation.Horizontal:
+            # Trackpads report pixels (including momentum after the fingers lift); a tilt
+            # wheel only reports angle notches
+            dx = ev.pixelDelta().x() or ev.delta() / 120 * _WHEEL_NOTCH_PAN_PX
+            self.pan_pixels(dx)
+            ev.accept()
         else:
             x0, x1 = self.viewRange()[0]
             super().wheelEvent(ev, axis=0)
-            if ev.delta() < 0 and self._max_span is not None:  # zooming out
-                y0, y1 = self.viewRange()[0]
-                if y1 - y0 >= self._max_span * (1 - 1e-6) and y1 - y0 <= (x1 - x0) * (1 + 1e-9):
-                    self.sigMaxSpanHit.emit()
+            self._check_max_span(x1 - x0, zoomed_out=ev.delta() < 0)
+
+    def pan_pixels(self, dx: float):
+        """Scroll the time axis by dx screen pixels (positive = towards earlier times)."""
+        if not dx:
+            return
+        self._resetTarget()
+        self.translateBy(x=-dx * self.viewPixelSize()[0])
+        self.sigRangeChangedManually.emit([True, False])
+
+    def zoom_time(self, factor: float, center_x: float):
+        """Scale the time span by factor (> 1 zooms out) around center_x (seconds)."""
+        x0, x1 = self.viewRange()[0]
+        self._resetTarget()
+        self.scaleBy(x=factor, y=None, center=pg.Point(center_x, 0))
+        self.sigRangeChangedManually.emit([True, False])
+        self._check_max_span(x1 - x0, zoomed_out=factor > 1)
+
+    def _check_max_span(self, span_before: float, zoomed_out: bool):
+        if zoomed_out and self._max_span is not None:
+            x0, x1 = self.viewRange()[0]
+            if x1 - x0 >= self._max_span * (1 - 1e-6) and x1 - x0 <= span_before * (1 + 1e-9):
+                self.sigMaxSpanHit.emit()
 
     def mouseClickEvent(self, ev):
         # pyqtgraph delivers double-clicks here (ev.double()), not to mouseDoubleClickEvent
@@ -94,6 +127,35 @@ class TimeZoomViewBox(pg.ViewBox):
             ev.accept()
             return
         super().mouseClickEvent(ev)
+
+
+class _PinchZoom(QObject):
+    """Event filter on a plot's viewport: a trackpad pinch zooms the time axis around the fingers."""
+
+    def __init__(self, view: pg.GraphicsView, viewbox: TimeZoomViewBox):
+        super().__init__(view.viewport())
+        self._view = view
+        self._viewbox = viewbox
+        view.viewport().installEventFilter(self)
+
+    def eventFilter(self, obj, ev):
+        if (
+            ev.type() == QEvent.Type.NativeGesture
+            and ev.gestureType() == Qt.NativeGestureType.ZoomNativeGesture
+        ):
+            value = ev.value()  # > 0: fingers moving apart (zoom in)
+            if value > -0.9:  # guard against a degenerate scale
+                scene_pos = self._view.mapToScene(ev.position().toPoint())
+                center = self._viewbox.mapSceneToView(scene_pos)
+                self._viewbox.zoom_time(1.0 / (1.0 + value), center.x())
+            ev.accept()
+            return True
+        return False
+
+
+def enable_pinch_zoom(view: pg.GraphicsView, viewbox: TimeZoomViewBox) -> QObject:
+    """Let a trackpad pinch zoom this plot's time axis (macOS native zoom gesture)."""
+    return _PinchZoom(view, viewbox)
 
 
 def setup_time_axes(plot: pg.PlotItem):
@@ -233,6 +295,7 @@ class TimeSeriesPlot(QWidget):
     def _setup_plot(self):
         """Set up the plot axes."""
         self._plot = self._graphics_widget.addPlot(row=0, col=0, viewBox=TimeZoomViewBox())
+        self._pinch = enable_pinch_zoom(self._graphics_widget, self._plot.getViewBox())
         # Data stays in volts; the axis shows µV (tick labels scaled only)
         theme.style_plot(self._plot, self._graphics_widget, left_scale=1e6)
         theme.axis_label(self._plot, "bottom", "Time (s)")

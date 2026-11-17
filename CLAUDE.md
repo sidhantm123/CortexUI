@@ -66,6 +66,14 @@ delete details that the code or git history already records.
     channels; CAR channel change re-slices instead of reloading; scatter toggle no longer re-filters; spin boxes
     fire once per typed number; stream switch sets the plot to the stream's view; the analog follower's range is no
     longer set while linked (10 s view came out as 7.52 s at load; the Sync drift known issue is gone).
+15. Zoom cap + smooth loading (user report: single-channel zoom-out wasn't capped and pans waited for data):
+    - User "Max length" for the view (default 20 s, Channels → View Range, remembered), enforced for wheel,
+      trackpad, pinch, drag and keys; memory may lower it (CAR → 12.3 s).
+    - Sliding float32 buffer with direction-aware prefetch and incremental reads in the worker (blank + filter
+      there too); direct sequential `.nsX` reads, ~7× faster than neo's memmap on a cold disk; analog plot reuses
+      the main window's freshly cached pages; fixed a worker leak (~190 MB per pan).
+    - Trackpad: horizontal swipe pans, vertical swipe and pinch zoom. Raster unlinked: zooms freely, syncs within
+      the cap, row click opens the electrode at that time. CAR filters only the displayed rows (exact; 136× less).
 
 ### Branches
 - **`main`:** the TDT/Blackrock viewer with filters, FFT/PSD, probe map, export and `.ccf` info.
@@ -157,9 +165,11 @@ tests/                unittest; test_blackrock.py has write_nsx_23() to build sy
     slowest channels are rows 125, 123, 121, 113, 111 (stim electrode first), matching the notes. A 300 Hz high-pass
     instead gave 1.35 s, which is why the 250–5000 Hz band is used.
 - **Filter chain (`dsp/filters.py`, `dsp/referencing.py`):**
-  - With `all_channel_data`, `apply_filter_chain` runs the **whole chain in order on the all-channel array** and
-    slices the displayed rows at the end, so filters before a CAR/CMR feed into it and filters after it see the
-    re-referenced data. CAR commutes with linear filters; CMR does not, so order matters there.
+  - With `all_channel_data`, filters before a CAR/CMR must feed into it. **CAR** is the same linear combination of
+    channels at every sample and every SOS filter is the same LTI filter on every channel, so they commute exactly:
+    the chain references all channels first, then filters **only the displayed rows** (one CAR filter: `car_rows`
+    subtracts each group's mean from the requested rows, no re-referenced copy of all channels; 136 ch × 15 s:
+    0.07 s, 16 MB transient). **CMR** (a median) doesn't commute, so a chain with CMR runs in order on every channel.
   - **Memory rules** (the all-channel buffer is ~1 GB for a 10 s view of 136 ch): the chain makes one working copy
     and then filters it in place; pass `inplace_ok=True` when the array you hand it is already scratch (a blanked
     copy, a pipeline chunk), never for `_raw_data`/`_raw_data_all`. `apply_car`/`apply_cmr` work row by row and take
@@ -182,7 +192,11 @@ tests/                unittest; test_blackrock.py has write_nsx_23() to build sy
   - With CAR/CMR active, all channels are loaded.
   - On RP01 a full blanked export of 128 ch takes 141 s, writes 7.4 GB and peaks at ~1.5 GB RSS. macOS `ru_maxrss`
     is in bytes.
-- **Zoom (`TimeZoomViewBox` in `ui/plot_widget.py`, used by Time Series and the analog plot):**
+- **Zoom (`TimeZoomViewBox` in `ui/plot_widget.py`, used by Time Series, analog and raster plots):**
+  - **Gestures:** vertical wheel / two-finger vertical swipe zooms time; horizontal wheel / two-finger horizontal
+    swipe pans (`pan_pixels`, `pixelDelta` for trackpads, same sign rule as Qt scroll areas so it follows macOS
+    natural scrolling); pinch zooms time (`enable_pinch_zoom`: an event filter on the plot's viewport for
+    `ZoomNativeGesture`). pyqtgraph alone zooms on any wheel orientation and ignores pinch.
   - The wheel and drags act on x only (`setMouseEnabled(y=False)`).
   - y auto-fits to the samples inside the visible x-window (`setAutoVisible(y=True)`).
   - Ctrl/⌘+wheel scales y and turns y auto-fit off. On macOS, ⌘ is `ControlModifier` and Ctrl is `MetaModifier`.
@@ -211,7 +225,8 @@ tests/                unittest; test_blackrock.py has write_nsx_23() to build sy
     spikes ≈ 8 MB).
   - It goes stale on blanking apply/remove, filter changes, analog-list edits, re-detected events, and k/polarity/
     refractory changes.
-  - `ui/raster_plot.py` draws one `PlotCurveItem(connect="pairs")` of the ticks within the view, x-linked to Time Series.
+  - `ui/raster_plot.py` draws one `PlotCurveItem(connect="pairs")` of the ticks within the view (not x-linked; see
+    Plotting).
   - **Performance:**
     - `dsp.filters.apply_filter` filters small blocks of channels in threads (scipy releases the GIL; results are
       identical).
@@ -250,19 +265,48 @@ tests/                unittest; test_blackrock.py has write_nsx_23() to build sy
       re-sends the key to it.
     - The shortcuts are disabled while it does this; otherwise the re-sent key triggers them again, recursing until
       a `SystemError`.
-- **Plotting:**
-  - Only a buffer of up to 3× the view is read from disk, and it is min/max-decimated to ≤ 8000 points.
-  - **Buffer cap:** `MainWindow.MAX_BUFFER_SAMPLES` (1e8 = 800 MB float64) limits the view length through
-    `TimeZoomViewBox.set_max_span` (`setLimits(maxXRange)`) on all three time plots, recomputed in
-    `_update_view_limits` whenever the loaded channel count changes (1 ch → 3333 s, 136 ch under CAR → 24 s); the
-    margin shrinks first. A clamp or a zoom-out stopped at the limit toasts.
+- **Plotting — sliding buffer (`core/view_buffer.py`, `BufferLoadWorker`, `MainWindow._refresh_plot`):**
+  - **Why:** `.nsX` stores every channel side by side, so reading one channel for T s reads the whole file region.
+    Cold reads through neo's memmap cost ~58 ms per recorded second (a page fault per 16 KB); that, not RAM, made
+    zoomed-out views and pans wait.
+  - **Direct reads:** `BlackrockReader` reads a segment's contiguous int16 block with plain file reads in 16 MB
+    steps (`_NsxStream.file_layout/read_counts`): ~8 ms per recorded second cold, identical samples to neo. Falls
+    back to neo when the segment isn't one plain block (e.g. per-sample timestamped files). Benefits every reader
+    caller (export, detection, blanking). `get_stream_data(..., dtype=np.float32)` for plot buffers.
+  - **View cap:** `min(user Max length, memory, duration)`. Max length is a QSettings preference (`max_view_s`,
+    default 20 s, Channels → View Range). Memory cap = `MAX_BUFFER_SAMPLES` (1e8 float32 = 400 MB) / (2 × loaded
+    channels × fs): 136 ch under CAR → 12.3 s. Applied with `TimeZoomViewBox.set_max_span` (`setLimits(maxXRange)`,
+    which pyqtgraph enforces for every input) on the time and analog plots only; `_on_view_range_requested` clamps
+    long requests from `start`. A clamp or a zoom-out stopped at it toasts (`_cap_message`).
+  - **Window:** buffer = view + margins, (before, after) = 0.5/0.5 views when still, 0.5 behind / 1.5 ahead while
+    panning (`_pan_dir`, set from view moves and arrow keys), scaled to fit `MAX_BUFFER_SAMPLES`.
+  - **Loads** (`_start_buffer_load` → `BufferLoadWorker`): read only `missing_pieces` of the target (5 s sub-reads,
+    cancel-checked), `stitch` to the old buffer's overlap (always a new, trimmed array), then blank + filter in the
+    worker (`process_buffer`, the same steps as `_apply_filters`). A jump with no overlap first loads view ± 1 s
+    (data in ~0.2 s), then `_maybe_prefetch` grows the margins. Prefetch starts when a third of a side's margin is
+    used and reads at most `MAX_EXTEND_S` (10 s) per side so landings are frequent; after a miss the full lead is read.
+  - **Never discard same-channel work:** an in-flight load covering the view is left to land; if a pan ran past it,
+    `_reload_pending` extends again from its result. Only a jump elsewhere or a channel/stream change cancels
+    (sequence check). Cancelling and re-reading from the older buffer is what made fast pans fall behind for good.
+  - A result whose processing signature (`_processing_signature`: bypass, filter dicts, blanking result ids)
+    changed while loading keeps the new raw samples and re-runs `_apply_filters`.
+  - On a miss the loaded part of the view is rendered at once (partial trace, not the previous frame).
+  - **Analog plot:** same worker and rules, one channel, no processing. While synced and on the main stream it
+    loads exactly the main buffer's window right after each main load lands (`_sync_analog_with_main`): those pages
+    are in the OS cache, ~1 ms per recorded second instead of a second cold read competing with the main one.
+  - **Measured (RP01, one channel, BP, 20 s view, cold regions):** data after a jump in ~0.2 s (was 0.9–1.3 s);
+    steady pans at 10, 20 and 30 s/s never ran past the loaded data. CAR (12.3 s view): 0/40 frames late at 6 s/s,
+    4/40 at 12 s/s. App footprint stays ~400 MB single-channel, ~1.1–1.5 GB under CAR. Note macOS `ru_maxrss` also
+    counts mapped file pages; use `footprint <pid>` for the app's own memory.
+  - **Worker leak (fixed):** `WorkerManager.submit`'s cleanup closure held the worker inside a Qt connection on
+    `worker.signals`, a cycle the GC can't see, so every finished worker and the buffer it referenced stayed alive
+    (~190 MB per pan). The closure holds a weakref; `BufferLoadWorker` drops `old`/`process` when done.
   - **One load, one render per move:** `_on_view_range_requested` sets `_setting_range` so the synchronous
-    `sigXRangeChanged` only updates the state, then calls `_refresh_plot` once; `_refresh_plot` keeps `_inflight`
-    and returns when a load already covers the view instead of cancelling it and re-reading. The plots listen to
+    `sigXRangeChanged` only updates the state, then calls `_refresh_plot` once. The plots listen to
     `sigXRangeChanged`, not `sigRangeChanged` (the y auto-fit after every render would trigger a second render).
   - `_apply_filters` and `_rerender_from_buffer` work on `_buffer_channels` (what `_raw_data` holds), never on the
-    current selection, which may have moved on while a load is in flight. `_on_data_loaded_async` drops
-    `_filtered_data` before re-filtering and leaves no buffer if that fails.
+    current selection, which may have moved on while a load is in flight. `_on_buffer_loaded` drops
+    `_filtered_data` before swapping in the new buffer and leaves no buffer if processing fails.
   - Views are clamped to `[0, duration]` (`StreamState.set_view_range`) before any buffer check; the plot itself may
     show past the ends (Ctrl+R pads 2 %).
   - **Linked views push back:** pyqtgraph's `setXLink` is one-directional in storage but a follower's
@@ -271,6 +315,10 @@ tests/                unittest; test_blackrock.py has write_nsx_23() to build sy
     to drift by a few ms after jumps); link it and let it follow.
   - The analog plot keeps its own buffer and `WorkerManager`. Both plots use `LEFT_AXIS_WIDTH` so the linked time
     axes line up. Event markers are drawn only for events in view (`MAX_MARKERS`).
+  - **Raster is not x-linked** (linking would cap it at the Time Series maximum): it opens on the whole recording
+    and zooms freely. `_sync_raster_to_time` / `_on_raster_view_changed` keep the two in step only while the raster
+    shows ≤ the cap. `RasterPlot.set_view` defers while the tab is hidden and nothing redraws off-screen. A row click
+    emits (channel, time) and centres Time Series there.
 
 ### Conventions
 - Channel indices are 0-based internally and shown 1-based. Times are seconds from stream start. Data is in volts.
@@ -293,9 +341,9 @@ Remaining:
 3. **Long-job lifecycle** (`workers.py`, done/failed callbacks, `closeEvent`, `theme.progress_dialog`): workers emit
    results after Cancel (EventDetectWorker never checks during detection) and `done()` applies them unguarded;
    `_load_block` doesn't cancel long jobs → add a recording generation counter, `is_cancelled()` before every emit,
-   compute `stale` *before* `progress.close()` (closing emits `canceled`); dialogs need `WA_DeleteOnClose`; analog
-   `_analog_seq` not bumped on early returns; error lambdas lack a seq guard; `closeEvent` waits 3 s then closes the
-   reader under running workers.
+   compute `stale` *before* `progress.close()` (closing emits `canceled`); dialogs need `WA_DeleteOnClose`;
+   `closeEvent` waits 3 s then closes the reader under running workers. (Plot/analog load seq guards and the
+   WorkerManager leak were fixed with the sliding buffer, §1 item 15.)
 4. **σ freeze** (`core/spike_detect.py`): `freeze_sigma` runs the whole view (+2 s pad) × all channels as one chunk —
    10 s ≈ 2.9 GB, 30 s ≈ 7 GB ⇒ MemoryError → accumulate |x| per 5 s chunk.
 5. **Render path** (`probe_map_widget.py`, `plot_widget.py`, `analog_plot.py`, `raster_plot.py`, `decimation.py`): a
@@ -358,8 +406,8 @@ Remaining:
 - Shading events on the main plot (currently only on the analog plot).
 - Blanking is computed for the stream that is current when Apply is pressed. Multi-stream recordings (e.g. ns5 + ns2)
   would need it applied per stream.
-- Faster full-file reads: detection takes about 50 s on 8 GB through neo's memmap. A direct sequential `.nsX` reader exists
-  in the archive (`nsp_pipeline:blackrock_io/nsx_header.py`) if it's ever needed.
+- Under CAR the buffer still holds every channel (~233–400 MB). It could hold only the displayed rows plus one
+  reference row per group (computed per read piece), at the cost of handling blanking per piece.
 
 ### Known issues
 - None open. (The Sync drift of a few ms after jumps was the linked-view push-back; fixed in audit step 2.)

@@ -365,6 +365,17 @@ class TestCAR(unittest.TestCase):
         _, warnings = apply_car(data, groups)
         self.assertEqual(len(warnings), 1)
 
+    def test_car_rows_matches_full_car(self):
+        """car_rows re-references only the requested rows, with the same result as apply_car."""
+        from dsp.referencing import car_rows
+
+        rng = np.random.default_rng(3)
+        data = rng.standard_normal((6, 50))
+        groups = [[0, 1, 2], [3, 4]]  # channel 5 is in no group
+        full, _ = apply_car(data, groups)
+        rows, _ = car_rows(data, groups, [4, 0, 5])
+        np.testing.assert_allclose(rows, full[[4, 0, 5]], atol=1e-12)
+
     def test_car_in_place(self):
         """copy=False re-references the array itself (the filter chain uses this on its own copy)."""
         data = np.array([[1.0, 2.0], [3.0, 4.0]])

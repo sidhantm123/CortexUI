@@ -6,7 +6,7 @@ import numpy as np
 from scipy import signal
 
 from models.filter_config import FilterConfig, FilterType
-from .referencing import apply_car, apply_cmr
+from .referencing import apply_car, apply_cmr, car_rows
 from .metrics import compute_vrms
 
 
@@ -177,6 +177,37 @@ def apply_filter_chain(
     uses_all = all_channel_data is not None
     work = all_channel_data if uses_all else data
     owned = inplace_ok
+
+    if uses_all and not any(f.filter_type == FilterType.CMR for f in active):
+        # CAR is the same linear combination of channels at every sample, and every SOS
+        # filter is the same linear time-invariant filter on every channel, so they commute
+        # exactly: reference all channels first, then filter only the displayed rows (136x
+        # less filtering for one displayed electrode). CMR (a median) doesn't commute, so a
+        # chain with CMR runs in order on every channel below.
+        cars = [f for f in active if f.filter_type == FilterType.CAR]
+        rows = [c for c in channel_indices if 0 <= c < work.shape[0]]
+        if len(cars) == 1 and len(rows) == len(channel_indices):
+            # The usual case: subtract each group's mean from the displayed rows only
+            # (no re-referenced copy of every channel)
+            rows_data, w = car_rows(work, cars[0].channel_groups, rows)
+            warnings.extend(w)
+        else:
+            for filt in cars:
+                work, w = apply_car(work, filt.channel_groups, copy=not owned)
+                warnings.extend(w)
+                owned = True
+            if len(rows) != len(channel_indices):
+                warnings.append("Some displayed channels are outside the loaded data")
+                rows_data = data.copy()
+                for i, c in enumerate(channel_indices):
+                    if 0 <= c < work.shape[0]:
+                        rows_data[i] = work[c]
+            else:
+                rows_data = work[rows]  # a new array
+        del work
+        uses_all = False
+        work, owned = rows_data, True
+        active = [f for f in active if f.filter_type != FilterType.CAR]
 
     for filt in active:
         if filt.filter_type in (FilterType.CAR, FilterType.CMR):

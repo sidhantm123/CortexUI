@@ -9,19 +9,25 @@ import pyqtgraph as pg
 
 from . import theme
 from .analog_plot import MODALITY_COLORS
-from .plot_widget import LEFT_AXIS_WIDTH, TIME_PLOT_HINT, TimeZoomViewBox
+from .plot_widget import LEFT_AXIS_WIDTH, TIME_PLOT_HINT, TimeZoomViewBox, enable_pinch_zoom
 
 TICK_HALF_HEIGHT = 0.4  # rows are 1 unit apart
 MAX_EVENT_BANDS = 300
+ROW_CLICK_HINT = " · Click a row to open that electrode at that time"
 
 
 class RasterPlot(QWidget):
     """
     Raster of detected spikes. Rows follow the given channel order (bottom = first).
     Only spikes inside the visible time window are drawn, as vertical line segments.
+
+    The time axis zooms freely (it can show the whole recording); the main window keeps it
+    in step with Time Series while its span is within the Time Series' maximum view length.
+    Nothing is redrawn while the tab is hidden.
     """
 
-    channel_clicked = Signal(int)  # channel index
+    channel_clicked = Signal(int, float)  # channel index, time clicked (s)
+    view_range_changed = Signal(float, float)  # the time range changed (any cause)
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -31,6 +37,7 @@ class RasterPlot(QWidget):
         layout.addWidget(self._graphics)
 
         self._plot = self._graphics.addPlot(row=0, col=0, viewBox=TimeZoomViewBox())
+        self._pinch = enable_pinch_zoom(self._graphics, self._plot.getViewBox())
         theme.style_plot(self._plot, self._graphics)
         self._plot.showGrid(x=True, y=False, alpha=theme.GRID_ALPHA)
         theme.axis_label(self._plot, "bottom", "Time (s)")
@@ -39,7 +46,7 @@ class RasterPlot(QWidget):
         self._plot.setMouseEnabled(x=True, y=False)
         self._plot.getViewBox().setMouseMode(pg.ViewBox.PanMode)
         self._plot.hideButtons()
-        self._graphics.setToolTip(TIME_PLOT_HINT + " · Click a row to open that electrode")
+        self._graphics.setToolTip(TIME_PLOT_HINT + ROW_CLICK_HINT)
 
         self._ticks = pg.PlotCurveItem(pen=pg.mkPen(theme.TEXT, width=1), connect="pairs")
         self._plot.addItem(self._ticks)
@@ -52,14 +59,41 @@ class RasterPlot(QWidget):
         self._describe: Optional[Callable[[int], str]] = None
         self._events = []
         self._colors: Dict[str, str] = {}
+        self._pending_view = None  # (start, end) set while hidden, applied when shown
+        self._dirty = False  # data or range changed while hidden
 
-        self._plot.sigXRangeChanged.connect(lambda *_: self._redraw())
+        self._plot.sigXRangeChanged.connect(self._on_x_range_changed)
         self._plot.getViewBox().sigResized.connect(self._place_stale_text)
         self._plot.scene().sigMouseClicked.connect(self._on_click)
         self._plot.scene().sigMouseMoved.connect(self._on_hover)
 
     def plot_item(self) -> pg.PlotItem:
         return self._plot
+
+    def set_view(self, start: float, end: float):
+        """Show this time range (applied when the tab is next shown, if it is hidden now)."""
+        if self.isVisible():
+            self._pending_view = None
+            self._plot.setXRange(start, end, padding=0)
+        else:
+            self._pending_view = (start, end)
+
+    def view_range(self):
+        """The time range shown, or about to be shown once the tab is visible."""
+        return self._pending_view or tuple(self._plot.viewRange()[0])
+
+    def showEvent(self, event):
+        super().showEvent(event)
+        if self._pending_view is not None:
+            start, end = self._pending_view
+            self._pending_view = None
+            self._plot.setXRange(start, end, padding=0)  # redraws via the range signal
+        elif self._dirty:
+            self._redraw()
+
+    def _on_x_range_changed(self, _vb, x_range):
+        self._redraw()
+        self.view_range_changed.emit(x_range[0], x_range[1])
 
     def set_spikes(self, channels: List[int], times: Dict[int, np.ndarray],
                    numbers: Dict[int, int], describe: Callable[[int], str], stale: bool = False):
@@ -101,6 +135,10 @@ class RasterPlot(QWidget):
         self._stale_text.setPos(self._plot.getViewBox().width() - 6, 4)
 
     def _redraw(self):
+        if not self.isVisible():
+            self._dirty = True  # redrawn in showEvent
+            return
+        self._dirty = False
         x0, x1 = self._plot.viewRange()[0]
         xs, ys = [], []
         for row, ch in enumerate(self._channels):
@@ -140,9 +178,10 @@ class RasterPlot(QWidget):
             return
         row = self._row_at(ev.scenePos())
         if row is not None:
-            self.channel_clicked.emit(self._channels[row])
+            t = self._plot.getViewBox().mapSceneToView(ev.scenePos()).x()
+            self.channel_clicked.emit(self._channels[row], float(t))
 
     def _on_hover(self, pos):
         row = self._row_at(pos)
         text = self._describe(self._channels[row]) if row is not None and self._describe else ""
-        self._graphics.setToolTip(text or TIME_PLOT_HINT + " · Click a row to open that electrode")
+        self._graphics.setToolTip(text or TIME_PLOT_HINT + ROW_CLICK_HINT)

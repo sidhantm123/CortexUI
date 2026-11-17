@@ -190,6 +190,7 @@ class TDTReader:
         channels: Optional[List[int]] = None,
         start_time: Optional[float] = None,
         end_time: Optional[float] = None,
+        dtype=np.float64,
     ) -> Tuple[np.ndarray, np.ndarray]:
         """
         Get stream data for specified channels and time range.
@@ -199,6 +200,7 @@ class TDTReader:
             channels: List of channel indices (0-based). None = all channels.
             start_time: Start time in seconds. None = beginning.
             end_time: End time in seconds. None = end.
+            dtype: float64 (default) or float32 (plot buffers).
 
         Returns:
             Tuple of (data, time_axis) where:
@@ -256,7 +258,7 @@ class TDTReader:
             n_samples = stream_data.shape[1]
             time_axis = start_time + np.arange(n_samples) / fs
 
-            return stream_data.astype(np.float64), time_axis
+            return stream_data.astype(dtype), time_axis
 
         except Exception as e:
             raise ValueError(f"Failed to read stream data: {e}")

@@ -52,6 +52,32 @@ def apply_car(
     return result, warnings
 
 
+def car_rows(
+    data: np.ndarray,
+    channel_groups: List[List[int]],
+    rows: List[int],
+) -> Tuple[np.ndarray, List[str]]:
+    """
+    apply_car(data, channel_groups)[0][rows], without re-referencing (or copying) the
+    channels that aren't asked for: each group's mean is summed row by row and subtracted
+    from the requested rows only.
+    """
+    groups, warnings = _valid_groups(channel_groups, data.shape[0], "CAR")
+    out = np.array(data[rows], dtype=np.result_type(data.dtype, np.float64))
+    acc_dtype = out.dtype
+    for valid in groups:
+        members = [i for i, r in enumerate(rows) if r in set(valid)]
+        if not members:
+            continue
+        mean = np.zeros(data.shape[1], dtype=acc_dtype)
+        for ch in valid:
+            mean += data[ch]
+        mean /= len(valid)
+        for i in members:
+            out[i] -= mean
+    return out, warnings
+
+
 def apply_cmr(
     data: np.ndarray,
     channel_groups: List[List[int]],

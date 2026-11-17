@@ -23,15 +23,70 @@ _UNIT_TO_VOLTS = {"uv": 1e-6, "µv": 1e-6, "μv": 1e-6, "mv": 1e-3, "v": 1.0, "n
 GAP_TOLERANCE_MS = 1.0
 
 
+# Direct reads go through the file in blocks of about this many bytes (all channels of a
+# block are read, then the requested ones kept), so temporaries stay small
+_READ_BLOCK_BYTES = 16 * 1024 * 1024
+
+
 class _NsxStream:
     """One continuous segment of one .nsX file."""
 
-    def __init__(self, rawio, seg_index: int, sample_rate: float, num_samples: int, to_volts: np.ndarray):
+    def __init__(self, rawio, seg_index: int, sample_rate: float, num_samples: int, to_volts: np.ndarray,
+                 nsx_nb: int):
         self.rawio = rawio
         self.seg_index = seg_index
         self.sample_rate = sample_rate
         self.num_samples = num_samples
         self.to_volts = to_volts
+        self.nsx_nb = nsx_nb
+        self._layout = None  # (filename, byte offset of sample 0, bytes per sample row), or False
+
+    def file_layout(self):
+        """
+        Where this segment's samples sit in the file, when they are one plain block of int16
+        rows (samples x all channels): (filename, offset, row_bytes). None otherwise (e.g.
+        per-sample timestamped files), in which case neo's memory map is used.
+
+        Reading that block with ordinary file reads is ~7x faster on a cold disk than
+        neo's memory map (which takes a page fault per 16 KB): RP01, 20 s of one channel,
+        1.16 s → 0.16 s.
+        """
+        if self._layout is None:
+            self._layout = False
+            try:
+                arr = self.rawio.nsx_datas[self.nsx_nb][self.seg_index]
+                mm = arr
+                while mm is not None and not isinstance(mm, np.memmap):
+                    mm = getattr(mm, "base", None)
+                if (
+                    mm is not None and mm.filename
+                    and arr.dtype == np.dtype("<i2") and arr.ndim == 2
+                    and arr.strides == (arr.shape[1] * 2, 2)
+                ):
+                    offset = mm.offset + (arr.__array_interface__["data"][0] - mm.__array_interface__["data"][0])
+                    self._layout = (str(mm.filename), int(offset), arr.shape[1] * 2)
+            except Exception:
+                self._layout = False
+        return self._layout or None
+
+    def read_counts(self, i_start: int, i_stop: int, channels: List[int]) -> np.ndarray:
+        """Raw int16 samples [i_start, i_stop) x channels, read straight from the file."""
+        filename, offset, row_bytes = self.file_layout()
+        n_all = row_bytes // 2
+        n = i_stop - i_start
+        out = np.empty((n, len(channels)), dtype=np.int16)
+        cols = np.asarray(channels)
+        block = max(1, _READ_BLOCK_BYTES // row_bytes)
+        with open(filename, "rb") as f:
+            f.seek(offset + i_start * row_bytes)
+            for a in range(0, n, block):
+                b = min(n, a + block)
+                rows = np.fromfile(f, dtype="<i2", count=(b - a) * n_all)
+                got = rows.size // n_all
+                out[a: a + got] = rows[: got * n_all].reshape(got, n_all)[:, cols]
+                if got < b - a:  # file shorter than its header says
+                    return out[: a + got]
+        return out
 
 
 class BlackrockReader:
@@ -143,7 +198,7 @@ class BlackrockReader:
                         continue
 
                     name = stream_base if n_segments == 1 else f"{stream_base}_seg{seg + 1}"
-                    self._streams[name] = _NsxStream(rawio, seg, fs, n_samples, to_volts)
+                    self._streams[name] = _NsxStream(rawio, seg, fs, n_samples, to_volts, nb)
 
                     duration = n_samples / fs
                     t_start = float(rawio.get_signal_t_start(0, seg, 0))
@@ -193,6 +248,7 @@ class BlackrockReader:
         channels: Optional[List[int]] = None,
         start_time: Optional[float] = None,
         end_time: Optional[float] = None,
+        dtype=np.float64,
     ) -> Tuple[np.ndarray, np.ndarray]:
         """
         Get stream data for specified channels and time range.
@@ -202,6 +258,8 @@ class BlackrockReader:
             channels: List of channel indices (0-based). None = all channels.
             start_time: Start time in seconds from the stream start. None = beginning.
             end_time: End time in seconds. None = end.
+            dtype: float64 (default) or float32 (plot buffers: half the memory; the
+                   int16 samples are still represented exactly enough).
 
         Returns:
             Tuple of (data, time_axis) where:
@@ -234,16 +292,19 @@ class BlackrockReader:
                 raise ValueError(f"No valid channels in selection: {channels}")
 
         try:
-            raw = stream.rawio.get_analogsignal_chunk(
-                block_index=0,
-                seg_index=stream.seg_index,
-                i_start=i_start,
-                i_stop=i_stop,
-                stream_index=0,
-                channel_indexes=valid_channels,
-            )
+            if stream.file_layout() is not None:
+                raw = stream.read_counts(i_start, i_stop, valid_channels)
+            else:
+                raw = stream.rawio.get_analogsignal_chunk(
+                    block_index=0,
+                    seg_index=stream.seg_index,
+                    i_start=i_start,
+                    i_stop=i_stop,
+                    stream_index=0,
+                    channel_indexes=valid_channels,
+                )
             data = stream.rawio.rescale_signal_raw_to_float(
-                raw, dtype="float64", stream_index=0, channel_indexes=valid_channels
+                raw, dtype=np.dtype(dtype).name, stream_index=0, channel_indexes=valid_channels
             )
         except Exception as e:
             raise ValueError(f"Failed to read stream data: {e}")

@@ -67,6 +67,7 @@ class ControlPanel(QWidget):
     view_range_requested = Signal(float, float)  # start, end
     refresh_requested = Signal()
     scatter_mode_changed = Signal(bool)
+    max_view_changed = Signal(float)  # seconds
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -176,6 +177,23 @@ class ControlPanel(QWidget):
         self._end_spin.setSingleStep(0.1)
         end_row.addWidget(self._end_spin)
         view_layout.addLayout(end_row)
+
+        # Longest span the time plots can show (app-wide, remembered)
+        max_row = QHBoxLayout()
+        max_row.addWidget(QLabel("Max length (s):"))
+        self._max_view_spin = QDoubleSpinBox()
+        self._max_view_spin.setDecimals(1)
+        self._max_view_spin.setRange(1.0, 3600.0)
+        self._max_view_spin.setSingleStep(5.0)
+        self._max_view_spin.setValue(20.0)
+        self._max_view_spin.setKeyboardTracking(False)
+        self._max_view_spin.setToolTip(
+            "Longest time span the plots can show. Shorter spans load faster when you jump around "
+            "the recording. With CAR/CMR or many overlay channels, memory can limit it further."
+        )
+        self._max_view_spin.valueChanged.connect(self.max_view_changed.emit)
+        max_row.addWidget(self._max_view_spin)
+        view_layout.addLayout(max_row)
 
         # Apply button
         btn_row = QHBoxLayout()
@@ -353,6 +371,12 @@ class ControlPanel(QWidget):
             self._start_spin.setValue(0)
             self._end_spin.setValue(min(10.0, self._state.duration))
             self._on_apply_view()
+
+    def set_max_view(self, seconds: float):
+        """Show the maximum view length (no signal)."""
+        self._max_view_spin.blockSignals(True)
+        self._max_view_spin.setValue(seconds)
+        self._max_view_spin.blockSignals(False)
 
     def update_view_range(self, start: float, end: float):
         """Update the view range spinboxes (called from plot)."""

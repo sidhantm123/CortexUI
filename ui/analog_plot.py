@@ -9,7 +9,7 @@ import pyqtgraph as pg
 
 from models.analog import StimEvent
 from . import theme
-from .plot_widget import LEFT_AXIS_WIDTH, TIME_PLOT_HINT, TimeZoomViewBox, setup_time_axes
+from .plot_widget import LEFT_AXIS_WIDTH, TIME_PLOT_HINT, TimeZoomViewBox, enable_pinch_zoom, setup_time_axes
 
 # One color per modality, assigned in the order modalities appear
 MODALITY_COLORS = theme.MODALITY_COLORS
@@ -38,6 +38,7 @@ class AnalogPlot(QWidget):
         layout.addWidget(self._graphics)
 
         self._plot = self._graphics.addPlot(row=0, col=0, viewBox=TimeZoomViewBox())
+        self._pinch = enable_pinch_zoom(self._graphics, self._plot.getViewBox())
         # Data stays in volts; the axis shows mV (tick labels scaled only)
         theme.style_plot(self._plot, self._graphics, left_scale=1e3)
         theme.axis_label(self._plot, "bottom", "Time (s)")

@@ -31,9 +31,10 @@ from PySide6.QtGui import QAction, QActionGroup, QDragEnterEvent, QDropEvent, QK
 import numpy as np
 
 from core.app_state import AppState
+from core.view_buffer import window_target, process_buffer
 from core.workers import (
     WorkerManager,
-    DataLoadWorker,
+    BufferLoadWorker,
     FilterWorker,
     SpectralWorker,
     EventDetectWorker,
@@ -43,7 +44,7 @@ from core.workers import (
 )
 from models import StreamState, ChannelMode, NUMBER_BY_ELECTRODE, NUMBER_BY_CHANNEL
 from dsp import apply_filter_chain, decimate_for_display
-from dsp.blanking import apply_blanking, basic_result, blank_spans, blank_mask
+from dsp.blanking import apply_blanking, basic_result, blank_spans
 from dsp.metrics import compute_vrms
 from dsp.spikes import robust_sigma, NEGATIVE, POSITIVE, BOTH
 from models.blanking import ADVANCED
@@ -98,10 +99,23 @@ class MainWindow(QMainWindow):
     # Maximum points to plot without decimation
     MAX_PLOT_POINTS = 8000
 
-    # Largest plot buffer read into memory, in channels × samples (1e8 float64 = 800 MB).
-    # The view length is limited so the buffer never exceeds it: 1 ch at 30 kHz → 3333 s,
-    # 8 overlay channels → 416 s, 136 channels under CAR/CMR → 24 s.
+    # Largest plot buffer held in memory, in channels × samples (1e8 float32 = 400 MB). The
+    # view length is limited so the buffer can hold at least twice the view: 136 channels
+    # under CAR/CMR at 30 kHz → 12.3 s; 8 overlay channels → 208 s.
     MAX_BUFFER_SAMPLES = 1e8
+
+    # Longest view by default (user setting: Channels → View Range → Max length)
+    DEFAULT_MAX_VIEW_S = 20.0
+
+    # A user-driven move outside the buffer waits this long for the next one before loading
+    MISS_DEBOUNCE_MS = 80
+
+    # Filters get this much real data beyond the view on a first ("view-first") load
+    FILTER_PAD_S = 1.0
+
+    # One background extension reads at most this much new recording per side (~0.3 s from
+    # a cold disk), so the buffer's edge advances in small, frequent steps during a pan
+    MAX_EXTEND_S = 10.0
 
     def __init__(self):
         super().__init__()
@@ -118,8 +132,8 @@ class MainWindow(QMainWindow):
         self._app_state = AppState()
         self._worker_manager = WorkerManager()
 
-        # Current data cache (raw + filtered buffers, wider than the visible view)
-        self._raw_data: Optional[np.ndarray] = None
+        # Plot buffer: a sliding window of samples around the view (float32), see _refresh_plot
+        self._raw_data: Optional[np.ndarray] = None  # displayed rows (= _buffer_channels)
         self._raw_time: Optional[np.ndarray] = None
         self._raw_data_all: Optional[np.ndarray] = None  # All channels for CAR/CMR
         self._filtered_data: Optional[np.ndarray] = None
@@ -127,18 +141,24 @@ class MainWindow(QMainWindow):
 
         # Buffer tracking — describes what time range / channels are in _filtered_data
         self._buffer_channels: list = []
-        self._buffer_start: float = -1.0
+        self._buffer_start: float = -1.0  # seconds, = _buf_range / fs
         self._buffer_end: float = -1.0
+        self._buf_range: Optional[tuple] = None  # [start, stop) samples held
+        self._buf_key: Optional[tuple] = None  # (stream, loaded channels) the raw rows belong to
 
-        # Async load context — carried from _refresh_plot to _on_data_loaded_async
+        # Async loads
         self._load_seq: int = 0          # incremented on each new request to discard stale results
-        self._pending_channels: list = []
-        self._pending_buffer_start: float = 0.0
-        self._pending_buffer_end: float = 0.0
-        self._pending_needs_all: bool = False
-        self._inflight = None  # (stream, channels, needs_all, buf_start, buf_end) of the load under way
+        self._inflight = None  # (stream, channels, needs_all, want_start, want_stop) of the load under way
+        self._reload_pending = False  # the view ran past the in-flight load: extend again when it lands
+        self._pan_dir = 0  # -1 / 0 / +1: direction of the last pan (sets where the buffer reads ahead)
         self._setting_range = False  # True while code, not the user, is setting the plot range
         self._max_span: Optional[float] = None  # current view-length limit (s), see _update_view_limits
+        saved_max = self._settings.value("max_view_s", self.DEFAULT_MAX_VIEW_S, type=float)
+        self._user_max_view: float = saved_max if saved_max and saved_max > 0 else self.DEFAULT_MAX_VIEW_S
+
+        # Raster ↔ Time Series sync (manual: the raster may zoom past the Time Series cap)
+        self._syncing_raster = False
+        self._raster_result_id = None  # spike result shown in the raster (its first view is the whole recording)
 
         # Fast-path tracking
         self._last_plot_channels: list = []
@@ -147,11 +167,14 @@ class MainWindow(QMainWindow):
         # Pending operations
         self._pending_refresh = False
 
-        # Analog viewer buffer (one analog channel, wider than its visible view)
+        # Analog viewer buffer (one analog channel, a sliding window around its view)
         self._analog_key = None  # (stream, channel) in the buffer
         self._analog_data: Optional[np.ndarray] = None
         self._analog_time: Optional[np.ndarray] = None
-        self._analog_buf = (-1.0, -1.0)
+        self._analog_range: Optional[tuple] = None  # [start, stop) samples held
+        self._analog_inflight = None  # (key, want_start, want_stop) of the analog load under way
+        self._analog_reload_pending = False
+        self._analog_waiting = False  # waiting for the main load to bring its pages into the cache
         self._analog_seq: int = 0
         self._pending_analog_refresh = False
         self._analog_workers = WorkerManager()
@@ -467,7 +490,7 @@ class MainWindow(QMainWindow):
         start, end = state.get_view_range()
         width = end - start
         start = min(max(0.0, start + fraction * width), max(0.0, state.duration - width))
-        self._on_view_range_requested(start, start + width)
+        self._on_view_range_requested(start, start + width, direction=1 if fraction > 0 else -1)
 
     def _zoom_view(self, factor: float):
         state = self._app_state.get_current_state()
@@ -517,7 +540,11 @@ class MainWindow(QMainWindow):
         QMessageBox.information(
             self, "Keyboard Shortcuts",
             f"<table>{rows}</table><p>Mouse: scroll zooms time, drag pans, Ctrl/⌘+scroll zooms "
-            "amplitude, double-click fits amplitude to the visible data.</p>",
+            "amplitude, double-click fits amplitude to the visible data.</p>"
+            "<p>Trackpad: swipe sideways to pan, swipe up/down or pinch to zoom time, ⌘ + swipe "
+            "up/down to zoom amplitude.</p>"
+            f"<p>The view can be at most {self._user_max_view:g} s long "
+            "(Channels → View Range → Max length).</p>",
         )
 
     def _connect_signals(self):
@@ -574,10 +601,16 @@ class MainWindow(QMainWindow):
         self._time_plot.threshold_dragged.connect(self._on_threshold_dragged)
         self._spike_panel.detect_requested.connect(self._on_detect_spikes)
         self._spike_panel.threshold_settings_changed.connect(self._on_spike_inputs_changed)
-        self._raster_plot.plot_item().setXLink(self._time_plot.plot_item())
+        # The raster is not x-linked: it may zoom out past the Time Series cap (whole-recording
+        # overview); _on_plot_view_changed / _on_raster_view_changed keep them in step within it
         self._raster_plot.channel_clicked.connect(self._on_raster_channel_clicked)
-        for plot in (self._time_plot, self._analog_plot, self._raster_plot):
+        self._raster_plot.view_range_changed.connect(self._on_raster_view_changed)
+        for plot in (self._time_plot, self._analog_plot):
             plot.plot_item().getViewBox().sigMaxSpanHit.connect(self._on_max_span_hit)
+
+        # View-length cap
+        self._control_panel.set_max_view(self._user_max_view)
+        self._control_panel.max_view_changed.connect(self._on_max_view_changed)
         self._sigma_selected: Optional[float] = None  # σ of the selected channel in view
 
         # Blanking
@@ -648,7 +681,11 @@ class MainWindow(QMainWindow):
             self._buffer_channels = []
             self._buffer_start = -1.0
             self._buffer_end = -1.0
+            self._buf_range = None
+            self._buf_key = None
+            self._max_span = None  # the cap depends on the stream (rate, duration)
             self._inflight = None
+            self._reload_pending = False
             self._load_seq += 1  # a load still running for the previous stream must not land here
 
             # Restore scatter mode from stream state
@@ -685,8 +722,19 @@ class MainWindow(QMainWindow):
         self._refresh_plot()
 
     @Slot(float, float)
-    def _on_view_range_requested(self, start: float, end: float):
-        """Set the view from code (event jump, Apply View, keys, stream switch) and refresh once."""
+    def _on_view_range_requested(self, start: float, end: float, direction: int = 0):
+        """
+        Set the view from code (event jump, Apply View, keys, stream switch) and refresh once.
+        direction: pan direction for read-ahead (arrow keys); 0 for a jump.
+        """
+        self._pan_dir = direction
+        state = self._app_state.get_current_state()
+        if state is not None:
+            self._update_view_limits(state)
+            if self._max_span is not None and end - start > self._max_span * (1 + 1e-9):
+                # Keep the requested start (pyqtgraph would shrink it around the centre)
+                end = start + self._max_span
+                self._toast.show_message(self._cap_message(state), WARNING)
         # setXRange emits sigRangeChanged synchronously; _on_plot_view_changed must not
         # start a second render or load for the same move
         self._setting_range = True
@@ -703,8 +751,15 @@ class MainWindow(QMainWindow):
         if state is None:
             return
 
+        if not self._setting_range:
+            # Pan direction, for reading ahead (a zoom moves the centre only a little)
+            p0, p1 = state.get_view_range()
+            moved = (start + end) / 2 - (p0 + p1) / 2
+            if abs(moved) > 0.02 * max(p1 - p0, 1e-9):
+                self._pan_dir = 1 if moved > 0 else -1
         state.set_view_range(start, end)
         self._control_panel.update_view_range(start, end)
+        self._sync_raster_to_time(start, end)
         if self._setting_range:
             return  # the caller refreshes once itself
 
@@ -713,20 +768,18 @@ class MainWindow(QMainWindow):
 
         # Fast path: filtered buffer already covers this view — render immediately,
         # no debounce, no disk I/O, no re-filtering (~5 ms for slice + decimate).
-        if (
-            self._filtered_data is not None
-            and self._raw_time is not None
-            and channels == self._buffer_channels
-            and start >= self._buffer_start
-            and end <= self._buffer_end
-        ):
+        if self._buffer_covers(state, channels, start, end):
             self._rerender_from_buffer(start, end, state)
+            self._maybe_prefetch()
             return
 
-        # Buffer miss — debounce so we don't hammer disk while user is still dragging.
+        # Buffer miss: show what is loaded now (instead of the previous frame), then load
+        # once the user pauses briefly, so a fast pan doesn't start a read per wheel step
+        if self._filtered_data is not None and channels == self._buffer_channels:
+            self._rerender_from_buffer(start, end, state)
         if not self._pending_refresh:
             self._pending_refresh = True
-            QTimer.singleShot(150, self._delayed_refresh)
+            QTimer.singleShot(self.MISS_DEBOUNCE_MS, self._delayed_refresh)
 
     def _delayed_refresh(self):
         """Delayed refresh after view change."""
@@ -848,15 +901,9 @@ class MainWindow(QMainWindow):
         # Just re-slice and re-decimate — no disk I/O, no re-filtering (~5 ms).
         # Filters are re-applied by _on_filters_changed when the chain changes.
         # A CAR/CMR that was just added needs the all-channel buffer, so that is a miss.
-        if (
-            self._filtered_data is not None
-            and self._raw_time is not None
-            and channels == self._buffer_channels
-            and start >= self._buffer_start
-            and end <= self._buffer_end
-            and (not needs_all or self._raw_data_all is not None)
-        ):
+        if self._buffer_covers(state, channels, start, end):
             self._rerender_from_buffer(start, end, state)
+            self._maybe_prefetch()
             return
 
         # ── Channel change under CAR/CMR: every channel is already in memory ───
@@ -870,134 +917,302 @@ class MainWindow(QMainWindow):
             self._raw_data = self._raw_data_all[channels]
             self._buffer_channels = channels
             self._apply_filters()
+            self._maybe_prefetch()
             return
 
-        # ── Buffer miss: async disk load ────────────────────────────────────
-        # Load up to 1× the view duration as margin on each side so the next few
-        # pan/zoom steps hit the buffer, shrunk so the buffer stays under MAX_BUFFER_SAMPLES.
-        load_channels = list(range(state.num_channels)) if needs_all else channels
-        max_span = self.MAX_BUFFER_SAMPLES / (len(load_channels) * state.sample_rate)
-        margin = max(0.0, min(max(end - start, 1.0), (max_span - (end - start)) / 2))
-        buf_start = max(0.0, start - margin)
-        buf_end = min(state.duration, end + margin)
+        # ── Buffer miss: background load ────────────────────────────────────
+        # Still overlapping the buffer (a pan ran past it): extend it, reading only the new
+        # part. Otherwise (a jump): read just the view plus a filter pad first, so data shows
+        # quickly; _maybe_prefetch then grows the margins in the background.
+        load_key = (state.stream_name, tuple(self._load_channels(state)))
+        v0, v1 = self._view_samples(state)
+        overlaps = (
+            self._buf_range is not None and self._buf_key == load_key
+            and self._buf_range[0] < v1 and v0 < self._buf_range[1]
+        )
+        self._start_buffer_load(state, full=overlaps)
 
-        # A load that already covers this view is on its way: let it land instead of
-        # cancelling it after it has done the reading and starting the same read again
+    # ------------------------------------------------------------------ plot buffer
+
+    def _load_channels(self, state) -> list:
+        """Rows read from disk: every channel under CAR/CMR, else the displayed ones."""
+        return list(range(state.num_channels)) if self._chain_needs_all(state) else state.get_active_channels()
+
+    @staticmethod
+    def _n_samples(state) -> int:
+        return int(round(state.duration * state.sample_rate))
+
+    def _view_samples(self, state) -> tuple:
+        """The current view as [start, stop) samples."""
+        start, end = state.get_view_range()
+        fs, n = state.sample_rate, self._n_samples(state)
+        return max(0, int(np.floor(start * fs))), min(n, int(np.ceil(end * fs)) + 1)
+
+    # Buffer margins as fractions of the view, (before, after): ahead of a pan the buffer
+    # holds 1.5 views (so reading starts early), behind it half a view (for small reversals)
+    MARGINS_STILL = (0.5, 0.5)
+    MARGINS_PANNING = (0.5, 1.5)
+
+    def _margin_samples(self, n_load: int, view_n: int) -> tuple:
+        """Samples kept (before, after) the view, following the pan direction, within MAX_BUFFER_SAMPLES."""
+        before, after = self.MARGINS_STILL if self._pan_dir == 0 else self.MARGINS_PANNING
+        if self._pan_dir < 0:
+            before, after = after, before
+        before, after = int(before * view_n), int(after * view_n)
+        room = max(0, int(self.MAX_BUFFER_SAMPLES // max(1, n_load)) - view_n)
+        if before + after > room:
+            scale = room / (before + after)
+            before, after = int(before * scale), int(after * scale)
+        return before, after
+
+    def _buffer_covers(self, state, channels, start: float, end: float) -> bool:
+        return (
+            self._filtered_data is not None
+            and self._raw_time is not None
+            and channels == self._buffer_channels
+            and start >= self._buffer_start
+            and end <= self._buffer_end
+            and (not self._chain_needs_all(state) or self._raw_data_all is not None)
+        )
+
+    def _processing_signature(self, state) -> tuple:
+        """Everything a processed buffer depends on besides the raw samples."""
+        return (
+            state.global_bypass,
+            [f.to_dict() for f in state.filters],
+            tuple(id(r) for r in self._app_state.active_blanking(state.stream_name)),
+        )
+
+    def _start_buffer_load(self, state, full: bool):
+        """
+        Load the buffer for the current view in the background.
+
+        full: the whole target (view ± margin); otherwise just the view ± a filter pad.
+        Only samples the current buffer doesn't hold are read.
+        """
+        fs = state.sample_rate
+        channels = state.get_active_channels()
+        needs_all = self._chain_needs_all(state)
+        load_channels = self._load_channels(state)
+        load_key = (state.stream_name, tuple(load_channels))
+        v0, v1 = self._view_samples(state)
+        before, after = self._margin_samples(len(load_channels), v1 - v0)
+        if not full:
+            pad = int(self.FILTER_PAD_S * fs)
+            before, after = min(before, pad), min(after, pad)
+        want = window_target(v0, v1, self._n_samples(state), before, after)
+        if want[1] <= want[0]:
+            return
+
+        reuse = self._buf_range is not None and self._buf_key == load_key
+        if reuse and self._buf_range[0] <= v0 and v1 <= self._buf_range[1]:
+            # Read-ahead while the view is still covered: at most MAX_EXTEND_S of new samples
+            # per side, so results land often; _maybe_prefetch continues from each landing.
+            # (After a miss the full lead is read instead: a capped read would end at the
+            # view's edge and land behind it again.)
+            step = int(self.MAX_EXTEND_S * fs)
+            b0, b1 = self._buf_range
+            want = (max(want[0], b0 - step), min(want[1], b1 + step))
+        if reuse and want == self._buf_range and channels == self._buffer_channels:
+            return  # already holding exactly this
+
+        # A load for these channels is already reading: never throw that work away while the
+        # view is still near it. If it covers the view, let it land; if a pan ran past it,
+        # extend again from its result as soon as it lands (_reload_pending). Cancelling it
+        # and re-reading from the older buffer is what made fast pans fall behind for good.
         request = (state.stream_name, tuple(channels), needs_all)
-        if (
-            self._inflight is not None
-            and self._inflight[:3] == request
-            and self._inflight[3] <= start
-            and end <= self._inflight[4]
-        ):
-            return
+        if self._inflight is not None and self._inflight[:3] == request:
+            w0, w1 = self._inflight[3], self._inflight[4]
+            if w0 <= v0 and v1 <= w1:
+                return
+            if w0 < v1 and v0 < w1:
+                self._reload_pending = True
+                return
 
-        # Cancel any other in-flight load; bump sequence so stale results are dropped
+        # A jump elsewhere or other channels: drop whatever is in flight (its result is
+        # discarded by the sequence check) and start over
+        self._reload_pending = False
         self._worker_manager.cancel_all()
         self._load_seq += 1
         seq = self._load_seq
-        self._inflight = request + (buf_start, buf_end)
+        self._inflight = request + want
 
-        # Store context for _on_data_loaded_async
-        self._pending_channels = channels
-        self._pending_buffer_start = buf_start
-        self._pending_buffer_end = buf_end
-        self._pending_needs_all = needs_all
-
-        worker = DataLoadWorker(
-            self._app_state.reader,
-            state.stream_name,
-            load_channels,
-            buf_start,
-            buf_end,
+        old = old_range = None
+        if reuse:
+            old = self._raw_data_all if needs_all else self._raw_data
+            old_range = self._buf_range if old is not None else None
+            if old is not None and not needs_all and list(load_channels) != list(self._buffer_channels):
+                old = old_range = None  # rows don't match
+        process = {
+            "rows": channels if needs_all else None,
+            "all_channels": needs_all,
+            "channels": channels,
+            "num_channels": state.num_channels,
+            "filters": copy.deepcopy(state.filters),
+            "global_bypass": state.global_bypass,
+            "blank_results": list(self._app_state.active_blanking(state.stream_name)),
+        }
+        tag = {
+            "stream": state.stream_name, "channels": channels, "needs_all": needs_all,
+            "load_key": load_key, "signature": self._processing_signature(state),
+        }
+        worker = BufferLoadWorker(
+            self._app_state.reader, state.stream_name, load_channels, want, fs,
+            old=old, old_range=old_range, process=process, tag=tag,
         )
-        worker.signals.result.connect(
-            lambda result, s=seq: self._on_data_loaded_async(result, s)
-        )
-        worker.signals.error.connect(
-            lambda err, s=seq: self._on_data_load_error(err, s)
-        )
+        worker.signals.result.connect(lambda result, s=seq: self._on_buffer_loaded(result, s))
+        worker.signals.error.connect(lambda err, s=seq: self._on_data_load_error(err, s))
         self._worker_manager.submit(worker)
 
+    def _maybe_prefetch(self):
+        """
+        Grow the buffer in the background before the view reaches its edge, so a steady pan
+        doesn't wait for the disk: once a third of the margin on a side is used up (and that
+        side isn't the recording's end), load the full target (only new samples are read).
+        """
+        state = self._app_state.get_current_state()
+        if state is None or self._buf_range is None or self._inflight is not None:
+            return
+        start, end = state.get_view_range()
+        if not self._buffer_covers(state, state.get_active_channels(), start, end):
+            return
+        v0, v1 = self._view_samples(state)
+        n_total = self._n_samples(state)
+        before, after = self._margin_samples(len(self._load_channels(state)), v1 - v0)
+        b0, b1 = self._buf_range
+        short_left = b0 > 0 and v0 - b0 < before * 2 // 3
+        short_right = b1 < n_total and b1 - v1 < after * 2 // 3
+        if short_left or short_right:
+            self._start_buffer_load(state, full=True)
+
     def _update_view_limits(self, state):
-        """Cap the view length so the plot buffer (3× the view at most) fits MAX_BUFFER_SAMPLES."""
+        """
+        Cap the view length: the user's maximum (Channels → View Range), and memory — the
+        buffer must hold at least twice the view within MAX_BUFFER_SAMPLES.
+        """
         n_load = state.num_channels if self._chain_needs_all(state) else len(state.get_active_channels())
-        max_span = self.MAX_BUFFER_SAMPLES / (max(1, n_load) * state.sample_rate)
+        memory_cap = self.MAX_BUFFER_SAMPLES / (2 * max(1, n_load) * state.sample_rate)
+        max_span = min(self._user_max_view, memory_cap, state.duration)
         if max_span == self._max_span:
             return
         self._max_span = max_span
         start, end = state.get_view_range()
         self._setting_range = True  # a clamp here must not start a refresh of its own
         try:
-            for plot in (self._time_plot, self._analog_plot, self._raster_plot):
+            for plot in (self._time_plot, self._analog_plot):
                 plot.plot_item().getViewBox().set_max_span(max_span)
-            if end - start > max_span:
+            if end - start > max_span * (1 + 1e-9):
                 self._time_plot.set_view_range(start, start + max_span)
-                self._toast.show_message(
-                    f"View limited to {max_span:.3g} s while {n_load} channels are loaded (memory)", WARNING
-                )
+                self._toast.show_message(self._cap_message(state), WARNING)
         finally:
             self._setting_range = False
+
+    def _cap_message(self, state) -> str:
+        n = state.num_channels if self._chain_needs_all(state) else len(state.get_active_channels())
+        memory_cap = self.MAX_BUFFER_SAMPLES / (2 * max(1, n) * state.sample_rate)
+        if memory_cap < self._user_max_view and memory_cap < state.duration:
+            return f"View limited to {self._max_span:.3g} s while {n} channels are loaded (memory)"
+        return f"View limited to {self._max_span:.3g} s (Max length: Channels → View Range)"
 
     def _on_max_span_hit(self):
         """A zoom-out stopped at the view-length limit."""
         state = self._app_state.get_current_state()
         if state is None or self._max_span is None:
             return
-        n = state.num_channels if self._chain_needs_all(state) else len(state.get_active_channels())
-        self._toast.show_message(
-            f"Zoomed out as far as memory allows: {self._max_span:.3g} s with {n} channel"
-            f"{'s' if n != 1 else ''} loaded",
-            WARNING,
-        )
+        self._toast.show_message(self._cap_message(state), WARNING)
+
+    @Slot(float)
+    def _on_max_view_changed(self, seconds: float):
+        """The user changed the maximum view length."""
+        self._user_max_view = float(seconds)
+        self._settings.setValue("max_view_s", self._user_max_view)
+        self._max_span = None  # re-apply
+        state = self._app_state.get_current_state()
+        if state is not None:
+            self._update_view_limits(state)
+            self._refresh_plot()
 
     def _on_data_load_error(self, err: str, seq: int):
         if seq != self._load_seq:
             return  # a cancelled or superseded load
         self._inflight = None
+        self._reload_pending = False
+        if self._analog_waiting:
+            self._analog_waiting = False
+            self._refresh_analog()
         self._toast.show_message(f"Error loading data: {err}", ERROR)
 
-    @Slot(object)
-    def _on_data_loaded_async(self, result: dict, seq: int):
-        """Receive async load result; discard stale results from cancelled workers."""
+    def _on_buffer_loaded(self, result: dict, seq: int):
+        """A background load landed: swap the buffer in, render, keep prefetching."""
         if seq != self._load_seq:
             return  # A newer request was already issued — ignore this one
         self._inflight = None
 
         state = self._app_state.get_current_state()
-        if state is None:
+        tag = result["tag"]
+        if state is None or state.stream_name != tag["stream"]:
             return
 
         data = result["data"]
-        time_axis = result["time"]
-        channels = self._pending_channels
-
-        if self._pending_needs_all:
-            # data contains ALL channels; split into display subset and full ref
+        channels = tag["channels"]
+        fs = state.sample_rate
+        if tag["needs_all"]:
             self._raw_data_all = data
-            self._raw_data = data[channels, :] if len(channels) < data.shape[0] else data
+            self._raw_data = data[channels]
         else:
             self._raw_data = data
             self._raw_data_all = None
-
-        self._raw_time = time_axis
-
-        # Record the buffer extent so future view changes can use the fast path
-        self._buffer_start = self._pending_buffer_start
-        self._buffer_end = self._pending_buffer_end
+        self._raw_time = result["time"]
+        self._buf_range = result["range"]
+        self._buf_key = tag["load_key"]
+        self._buffer_start = self._buf_range[0] / fs
+        self._buffer_end = self._buf_range[1] / fs
         self._buffer_channels = channels
 
-        # Apply filters and render. The old filtered buffer must never be sliced against
-        # the new time axis, so drop it first; if processing fails (e.g. MemoryError), no
-        # buffer is left behind.
+        # The old filtered buffer must never be sliced against the new time axis
         self._filtered_data = None
         self._blank_mask = None
         try:
-            self._apply_filters()
+            if result["processed"] is not None and tag["signature"] == self._processing_signature(state):
+                self._show_filter_warnings(result["warnings"])
+                self._filtered_data = result["processed"]
+                self._blank_mask = result["mask"]
+                self._rerender_from_buffer(*state.get_view_range(), state)
+                self._update_plot_chips()
+            else:
+                # Filters or blanking changed while it loaded: process the new samples now
+                self._apply_filters()
         except Exception as e:
             self._raw_data = self._raw_data_all = self._raw_time = None
+            self._buf_range = self._buf_key = None
             self._buffer_channels = []
+            self._reload_pending = False
             self._toast.show_message(f"Could not process the loaded data: {e}", ERROR)
+            return
+        # The analog plot reads this same window now, while its pages are in the OS cache
+        # (before the next main load starts reading new pages)
+        self._sync_analog_with_main()
+        if self._reload_pending:
+            # The view moved past this load while it was reading: extend from here now
+            self._reload_pending = False
+            self._refresh_plot()
+        else:
+            self._maybe_prefetch()
+
+    def _sync_analog_with_main(self):
+        key = self._current_analog_key()
+        if key is None or not self._analog_follows_main(key):
+            return
+        if self._analog_waiting or self._analog_range != self._buf_range:
+            self._analog_waiting = False
+            self._refresh_analog()
+            self._maybe_prefetch_analog()
+
+    def _show_filter_warnings(self, warnings):
+        warning = warnings[0] if warnings else ""
+        if warning and warning != self._last_filter_warning:
+            self._toast.show_message(f"Filter warning: {warning}", WARNING)
+        self._last_filter_warning = warning
 
     def _rerender_from_buffer(self, start: float, end: float, state):
         """
@@ -1075,43 +1290,25 @@ class MainWindow(QMainWindow):
         if not channels:
             return
 
-        # The all-channel buffer (~1 GB for a 10 s view of 136 ch) is only kept while a
-        # CAR/CMR filter needs it
+        # The all-channel buffer (~400 MB for a 12 s view of 136 ch) is only kept while a
+        # CAR/CMR filter needs it; the displayed rows stay valid on their own
         needs_all = self._chain_needs_all(state)
-        if not needs_all:
+        if not needs_all and self._raw_data_all is not None:
             self._raw_data_all = None
+            self._buf_key = (state.stream_name, tuple(channels))
 
-        # Blank stimulation artifacts on copies (the raw buffer is kept, so removing
-        # blanking needs no reload), then apply the filter chain (always returns 3-tuple)
-        raw = self._blank(self._raw_data, self._raw_time, channels, state.stream_name)
-        raw_all = None
-        if needs_all and self._raw_data_all is not None:
-            raw_all = self._blank(
-                self._raw_data_all, self._raw_time, list(range(state.num_channels)), state.stream_name
-            )
-        data, warnings, _ = apply_filter_chain(
-            raw,
-            state.filters,
-            state.sample_rate,
-            state.global_bypass,
-            all_channel_data=raw_all,
-            channel_indices=channels,
-            with_vrms=False,  # the view's RMS is computed per render, blanked samples excluded
-            # A blanked copy is scratch; the raw buffers themselves must stay untouched
-            inplace_ok=(raw_all is not self._raw_data_all) if raw_all is not None else (raw is not self._raw_data),
+        # Blank stimulation artifacts on copies (the raw buffer is kept, so removing blanking
+        # needs no reload), then filter: the same steps background loads run (process_buffer)
+        data, mask, warnings = process_buffer(
+            self._raw_data, self._raw_data_all if needs_all else None, self._raw_time, channels,
+            state.num_channels, state.filters, state.global_bypass, state.sample_rate,
+            self._app_state.active_blanking(state.stream_name),
         )
-        del raw, raw_all
-        warning = warnings[0] if warnings else ""
-        if warning and warning != self._last_filter_warning:
-            self._toast.show_message(f"Filter warning: {warning}", WARNING)
-        self._last_filter_warning = warning
+        self._show_filter_warnings(warnings)
 
-        # Cache the full-resolution filtered buffer
+        # Cache the full-resolution filtered buffer, and the blanked samples (left out of Vrms)
         self._filtered_data = data
-
-        # Blanked samples, so Vrms can leave them out
-        results = self._app_state.active_blanking(state.stream_name)
-        self._blank_mask = blank_mask(self._raw_time, channels, results) if results else None
+        self._blank_mask = mask
 
         # Render only the visible view window (slice + decimate from buffer)
         view_start, view_end = state.get_view_range()
@@ -1126,6 +1323,11 @@ class MainWindow(QMainWindow):
         self._analog_key = None
         self._analog_data = None
         self._analog_time = None
+        self._analog_range = None
+        self._analog_inflight = None
+        self._analog_reload_pending = False
+        self._analog_waiting = False
+        self._analog_seq += 1  # an analog load for the previous recording must not land
         self._analog_panel.refresh()
         self._analog_panel.set_summary("")
         self._blanking_panel.refresh()
@@ -1203,24 +1405,34 @@ class MainWindow(QMainWindow):
     @Slot(object, object)
     def _on_analog_view_changed(self, start: float, end: float):
         """Analog plot moved (linked to the main plot, or panned on its own)."""
-        if self._analog_buffer_covers(self._analog_panel.selected_channel(), start, end):
+        key = self._current_analog_key()
+        if self._analog_buffer_covers(key, start, end):
             self._render_analog(start, end)
-        elif not self._pending_analog_refresh:
+            self._maybe_prefetch_analog()
+            return
+        if key is not None and key == self._analog_key:
+            self._render_analog(start, end)  # what is loaded, until the rest arrives
+        if not self._pending_analog_refresh:
             self._pending_analog_refresh = True
-            QTimer.singleShot(150, self._delayed_analog_refresh)
+            QTimer.singleShot(self.MISS_DEBOUNCE_MS, self._delayed_analog_refresh)
 
     def _delayed_analog_refresh(self):
         self._pending_analog_refresh = False
         self._refresh_analog()
 
     def _analog_buffer_covers(self, key, start: float, end: float) -> bool:
-        return (
-            key is not None
-            and key == self._analog_key
-            and self._analog_data is not None
-            and start >= self._analog_buf[0]
-            and end <= self._analog_buf[1]
-        )
+        if key is None or key != self._analog_key or self._analog_data is None or self._analog_range is None:
+            return False
+        fs = self._app_state.stream_states[key[0]].sample_rate
+        return start >= self._analog_range[0] / fs and end <= self._analog_range[1] / fs
+
+    def _analog_view_samples(self, key) -> tuple:
+        st = self._app_state.stream_states[key[0]]
+        start, end = self._analog_plot.get_view_range()
+        fs, n = st.sample_rate, self._n_samples(st)
+        v0 = max(0, min(n, int(np.floor(max(0.0, start) * fs))))
+        v1 = max(v0, min(n, int(np.ceil(end * fs)) + 1))
+        return v0, v1
 
     def _refresh_analog(self):
         """Show the selected analog channel for the analog plot's current view."""
@@ -1233,39 +1445,113 @@ class MainWindow(QMainWindow):
         start, end = self._analog_plot.get_view_range()
         if self._analog_buffer_covers(key, start, end):
             self._render_analog(start, end)
+            self._maybe_prefetch_analog()
             return
+        v0, v1 = self._analog_view_samples(key)
+        overlaps = (
+            key == self._analog_key and self._analog_range is not None
+            and self._analog_range[0] < v1 and v0 < self._analog_range[1]
+        )
+        self._start_analog_load(key, full=overlaps)
 
+    def _analog_follows_main(self, key) -> bool:
+        """Synced and on the main plot's stream: the analog plot reuses the main buffer's window."""
+        return self._analog_panel.is_synced() and key[0] == self._app_state.current_stream
+
+    def _start_analog_load(self, key, full: bool):
+        """
+        Load the analog channel's window in the background (one channel, nothing to filter).
+
+        When it follows the main plot, it loads exactly the main buffer's sample window:
+        the file stores every channel side by side, so those pages were just read and are
+        in the OS cache (~0.1 s instead of a second cold read competing with the main one).
+        """
         stream, channel = key
-        duration = self._app_state.stream_states[stream].duration
-        view_dur = max(end - start, 1.0)
-        buf_start = max(0.0, start - view_dur)
-        buf_end = min(duration, end + view_dur)
-        if buf_end <= buf_start:
+        st = self._app_state.stream_states[stream]
+        v0, v1 = self._analog_view_samples(key)
+        if v1 <= v0:
             self._analog_plot.set_data(None, None)
             return
+        if self._analog_follows_main(key):
+            main = self._buf_range
+            if main is not None and main[0] <= v0 and v1 <= main[1]:
+                want = main
+            elif self._inflight is not None:
+                self._analog_waiting = True  # read once the main load has brought the pages in
+                return
+            else:
+                want = window_target(v0, v1, self._n_samples(st), 0)
+        else:
+            margin = (v1 - v0) if full else 0
+            want = window_target(v0, v1, self._n_samples(st), margin)
+        same = key == self._analog_key and self._analog_range is not None
+        if same and want == self._analog_range:
+            return
+        inflight = self._analog_inflight
+        if inflight is not None and inflight[0] == key:
+            if inflight[1] <= v0 and v1 <= inflight[2]:
+                return  # a load covering this view is on its way
+            if inflight[1] < v1 and v0 < inflight[2]:
+                self._analog_reload_pending = True  # extend from its result when it lands
+                return
 
+        self._analog_reload_pending = False
         self._analog_workers.cancel_all()
         self._analog_seq += 1
         seq = self._analog_seq
-        worker = DataLoadWorker(
-            self._app_state.reader, stream, [channel], buf_start, buf_end
+        self._analog_inflight = (key,) + want
+        worker = BufferLoadWorker(
+            self._app_state.reader, stream, [channel], want, st.sample_rate,
+            old=self._analog_data[None, :] if same else None,
+            old_range=self._analog_range if same else None,
+            tag=key,
         )
-        worker.signals.result.connect(
-            lambda result, s=seq, k=key, b=(buf_start, buf_end): self._on_analog_loaded(result, s, k, b)
-        )
-        worker.signals.error.connect(
-            lambda err: self._toast.show_message(f"Error loading analog data: {err}", ERROR)
-        )
+        worker.signals.result.connect(lambda result, s=seq: self._on_analog_loaded(result, s))
+        worker.signals.error.connect(lambda err, s=seq: self._on_analog_load_error(err, s))
         self._analog_workers.submit(worker)
 
-    def _on_analog_loaded(self, result: dict, seq: int, key, buf):
+    def _maybe_prefetch_analog(self):
+        key = self._current_analog_key()
+        if key is None or self._analog_inflight is not None or not self._analog_buffer_covers(
+            key, *self._analog_plot.get_view_range()
+        ):
+            return
+        if self._analog_follows_main(key):
+            # Keep the same window as the main buffer (cache hits)
+            if self._buf_range is not None and self._analog_range != self._buf_range:
+                self._start_analog_load(key, full=True)
+            return
+        v0, v1 = self._analog_view_samples(key)
+        n_total = self._n_samples(self._app_state.stream_states[key[0]])
+        b0, b1 = self._analog_range
+        half = (v1 - v0) // 2
+        if (b0 > 0 and v0 - b0 < half) or (b1 < n_total and b1 - v1 < half):
+            self._start_analog_load(key, full=True)
+
+    def _on_analog_load_error(self, err: str, seq: int):
         if seq != self._analog_seq:
             return
+        self._analog_inflight = None
+        self._analog_reload_pending = False
+        self._toast.show_message(f"Error loading analog data: {err}", ERROR)
+
+    def _on_analog_loaded(self, result: dict, seq: int):
+        if seq != self._analog_seq:
+            return
+        self._analog_inflight = None
+        key = result["tag"]
+        if key not in self._app_state.analog_channel_list():
+            return  # the channel went away while it loaded
         self._analog_key = key
         self._analog_data = np.ravel(result["data"])
         self._analog_time = result["time"]
-        self._analog_buf = buf
-        self._render_analog(*self._analog_plot.get_view_range())
+        self._analog_range = result["range"]
+        if self._analog_reload_pending:
+            self._analog_reload_pending = False
+            self._refresh_analog()
+        else:
+            self._render_analog(*self._analog_plot.get_view_range())
+            self._maybe_prefetch_analog()
 
     def _render_analog(self, start: float, end: float):
         time, data = self._analog_time, self._analog_data
@@ -1385,6 +1671,14 @@ class MainWindow(QMainWindow):
         self._raster_plot.set_spikes(
             rows, res.times, {c: state.display_number(c) for c in rows}, describe, res.stale
         )
+        if id(res) != self._raster_result_id:
+            # A new result opens on the whole recording (the raster isn't capped)
+            self._raster_result_id = id(res)
+            self._syncing_raster = True
+            try:
+                self._raster_plot.set_view(0.0, res.duration or state.duration)
+            finally:
+                self._syncing_raster = False
 
     @Slot()
     def _on_detect_spikes(self):
@@ -1438,17 +1732,47 @@ class MainWindow(QMainWindow):
         self._worker_manager.thread_pool.start(worker)
         progress.show()
 
-    @Slot(int)
-    def _on_raster_channel_clicked(self, channel: int):
-        """Open the clicked electrode in Time Series."""
+    @Slot(int, float)
+    def _on_raster_channel_clicked(self, channel: int, t: float):
+        """Open the clicked electrode in Time Series, centred on the clicked time."""
         state = self._app_state.get_current_state()
-        if state is None:
+        if state is None or channel not in state.neural_channels():
             return
         state.channel_mode = ChannelMode.SINGLE
         state.selected_channel = channel
         self._control_panel.set_state(state)
+        self._probe_map.set_selected_channel(channel)
         self._plot_tabs.setCurrentWidget(self._time_plot)
-        self._refresh_plot()
+        start, end = state.get_view_range()
+        width = end - start
+        start = min(max(0.0, t - width / 2), max(0.0, state.duration - width))
+        self._on_view_range_requested(start, start + width)
+
+    def _sync_raster_to_time(self, start: float, end: float):
+        """Time Series moved: the raster follows while it isn't zoomed out past the cap."""
+        if self._syncing_raster or self._max_span is None:
+            return
+        r0, r1 = self._raster_plot.view_range()
+        if r1 - r0 > self._max_span * (1 + 1e-6):
+            return  # the raster is showing a wider overview; leave it there
+        self._syncing_raster = True
+        try:
+            self._raster_plot.set_view(start, end)
+        finally:
+            self._syncing_raster = False
+
+    @Slot(float, float)
+    def _on_raster_view_changed(self, start: float, end: float):
+        """The raster moved: Time Series follows while the raster's span fits the cap."""
+        if self._syncing_raster or self._max_span is None or end - start > self._max_span * (1 + 1e-6):
+            return
+        if self._app_state.get_current_state() is None:
+            return
+        self._syncing_raster = True
+        try:
+            self._on_view_range_requested(start, end)
+        finally:
+            self._syncing_raster = False
 
     @Slot(float)
     def _on_threshold_dragged(self, level: float):

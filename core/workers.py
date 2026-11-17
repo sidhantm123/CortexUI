@@ -1,4 +1,5 @@
 """Worker threads for background processing."""
+import weakref
 from typing import List, Optional, Tuple
 import numpy as np
 
@@ -36,69 +37,109 @@ class CancellableWorker(QRunnable):
         return self._cancelled
 
 
-class DataLoadWorker(CancellableWorker):
+class BufferLoadWorker(CancellableWorker):
     """
-    Worker for loading stream data.
+    Bring a plot buffer to the sample range `want`.
 
-    Emits result as dict with:
-        - 'data': np.ndarray (n_channels, n_samples)
-        - 'time': np.ndarray
-        - 'stream_name': str
-        - 'channels': list of channel indices
+    Only the parts the previous buffer doesn't hold are read (the file stores every
+    channel side by side, so reading costs ~28 ms per second of recording whatever the
+    channel count); they are stitched to the overlap of the previous buffer and, when
+    `process` is given, blanked and filtered here rather than on the GUI thread.
+
+    Emits result: dict with
+        range: (start, stop) samples held; time: float64 seconds per sample
+        data: float32 (len(load_channels) x samples) — every loaded row
+        processed, mask, warnings: see core.view_buffer.process_buffer (None without `process`)
+        tag: passed through unchanged
     """
 
-    def __init__(
-        self,
-        reader,
-        stream_name: str,
-        channels: List[int],
-        start_time: float,
-        end_time: float,
-    ):
+    # Pieces are read in sub-reads of this length, checking for cancellation in between, so
+    # a superseded load stops within ~0.15 s instead of tying up the disk
+    READ_STEP_S = 5.0
+
+    def __init__(self, reader, stream: str, load_channels: List[int], want, fs: float,
+                 old: Optional[np.ndarray] = None, old_range=None, process: Optional[dict] = None,
+                 tag=None):
+        """
+        Args:
+            old, old_range: the previous buffer of the same rows (read only), or None.
+            process: None, or dict(rows, channels, num_channels, filters, global_bypass,
+                     blank_results, all_channels) — `rows` picks the displayed channels out of
+                     the loaded ones; `all_channels` says the loaded rows are every channel
+                     (CAR/CMR reference).
+        """
         super().__init__()
         self.reader = reader
-        self.stream_name = stream_name
-        self.channels = channels
-        self.start_time = start_time
-        self.end_time = end_time
+        self.stream = stream
+        self.load_channels = list(load_channels)
+        self.want = (int(want[0]), int(want[1]))
+        self.fs = fs
+        self.old = old
+        self.old_range = old_range
+        self.process = process
+        self.tag = tag
 
     @Slot()
     def run(self):
-        """Execute the data loading."""
+        from core.export import _t
+        from core.view_buffer import missing_pieces, stitch, process_buffer
+
         self.signals.started.emit()
-
         try:
+            w0, w1 = self.want
+            have = self.old_range if self.old is not None else None
+            step = max(1, int(self.READ_STEP_S * self.fs))
+            pieces = []
+            for p0, p1 in missing_pieces(have, (w0, w1)):
+                for a in range(p0, p1, step):
+                    b = min(p1, a + step)
+                    if self.is_cancelled():
+                        self.signals.cancelled.emit()
+                        return
+                    data, _ = self.reader.get_stream_data(
+                        self.stream, channels=self.load_channels,
+                        start_time=_t(a, self.fs), end_time=_t(b, self.fs), dtype=np.float32,
+                    )
+                    data = np.atleast_2d(data)
+                    if data.shape[1] > b - a:
+                        data = data[:, : b - a]
+                    elif data.shape[1] < b - a:
+                        if b != w1:  # only the recording's very end may come back short
+                            raise ValueError(f"Read {data.shape[1]} samples of [{a}, {b})")
+                        b = w1 = a + data.shape[1]
+                    pieces.append(((a, b), data))
+                    if b == w1 and b < p1:
+                        break
+            buffer = stitch(self.old, have, pieces, (w0, w1))
+            del pieces
+            self.old = None  # never keep the previous buffer alive longer than needed
+            time_axis = (w0 + np.arange(w1 - w0)) / self.fs
+
+            processed = mask = None
+            warnings: List[str] = []
+            p, self.process = self.process, None
+            if p is not None:
+                if self.is_cancelled():
+                    self.signals.cancelled.emit()
+                    return
+                raw = buffer[p["rows"]] if p["all_channels"] else buffer
+                processed, mask, warnings = process_buffer(
+                    raw, buffer if p["all_channels"] else None, time_axis, p["channels"],
+                    p["num_channels"], p["filters"], p["global_bypass"], self.fs, p["blank_results"],
+                )
+
             if self.is_cancelled():
                 self.signals.cancelled.emit()
                 return
-
-            self.signals.progress.emit(10)
-
-            data, time_axis = self.reader.get_stream_data(
-                self.stream_name,
-                channels=self.channels,
-                start_time=self.start_time,
-                end_time=self.end_time,
-            )
-
-            if self.is_cancelled():
-                self.signals.cancelled.emit()
-                return
-
-            self.signals.progress.emit(100)
-
-            result = {
-                "data": data,
-                "time": time_axis,
-                "stream_name": self.stream_name,
-                "channels": self.channels,
-            }
-
-            self.signals.result.emit(result)
+            self.signals.result.emit({
+                "range": (w0, w1), "time": time_axis, "data": buffer,
+                "processed": processed, "mask": mask, "warnings": warnings, "tag": self.tag,
+            })
             self.signals.finished.emit()
-
         except Exception as e:
             self.signals.error.emit(str(e))
+        finally:
+            self.old = self.process = None
 
 
 class FilterWorker(CancellableWorker):
@@ -658,10 +699,15 @@ class WorkerManager:
         """Submit a worker for execution."""
         self._active_workers.append(worker)
 
-        # Remove from list when done
+        # Remove from list when done. The closure must not hold the worker itself: it is
+        # stored in a Qt connection on worker.signals, a cycle Python's GC can't see, which
+        # kept every finished worker (and the buffers it referenced) alive.
+        ref = weakref.ref(worker)
+
         def cleanup():
-            if worker in self._active_workers:
-                self._active_workers.remove(worker)
+            w = ref()
+            if w is not None and w in self._active_workers:
+                self._active_workers.remove(w)
 
         worker.signals.finished.connect(cleanup)
         worker.signals.error.connect(cleanup)
