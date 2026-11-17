@@ -11,9 +11,9 @@ delete details that the code or git history already records.
 | | |
 |---|---|
 | Active branch | `NSP_Basic` (not pushed; branched from `main` @ `beb2da4`) |
-| Last commit | `55b8b60` Restore the Block Info + Streams left panel layout in the new style |
-| Tests | 110 passing: `tdtgui/bin/python -m unittest discover tests` |
-| Next step | User tests UI-2; then pick from "Later" (§4) |
+| Last commit | `b332ee8` Run the whole filter chain on the all-channel buffer and cut CAR memory 3x |
+| Tests | 115 passing: `tdtgui/bin/python -m unittest discover tests` |
+| Next step | User tests audit step 1; then audit step 2, buffer logic (§4 "Audit fixes") |
 
 ### Done
 1. Analog input viewer and event detection (`78664d0`).
@@ -54,6 +54,12 @@ delete details that the code or git history already records.
     - The status bar is removed; messages go to a `Toast` (`ui/toast.py`).
     - Empty-state hints, keyboard shortcuts, and control tabs wrapped in scroll areas so they never squash at
       1200×800.
+13. (`b332ee8`) Audit step 1 (filter chain + CAR memory):
+    - **Bug:** any SOS filter placed *before* CAR/CMR was silently dropped (SOS ran on the displayed rows, CAR on the
+      raw all-channel array, which then overwrote them). The chain now runs in order on the all-channel array.
+    - **Bug:** adding CAR/CMR while the buffer covered the view never loaded the all-channel data (fast path).
+    - **Memory:** per-edit transient on a CAR view 4.0× → 1.35× of the all-channel buffer (1175 → 395 MB on a 3 s
+      view); the buffer is freed when no CAR/CMR needs it. Render path unchanged.
 
 ### Branches
 - **`main`:** the TDT/Blackrock viewer with filters, FFT/PSD, probe map, export and `.ccf` info.
@@ -132,9 +138,9 @@ tests/                unittest; test_blackrock.py has write_nsx_23() to build sy
 - **Blanking (`models/blanking.py`, `dsp/blanking.py`, `BlankingWorker`):**
   - Settings are per modality (`AppState.blanking_settings`). Results are per modality (`AppState.blanking_results`),
     each holding the stream plus `start_s`/`end_s` of shape (trials × channels). Never store a sample mask.
-  - `MainWindow._blank()` interpolates the active results on a copy of each buffer before `apply_filter_chain`: in the
-    plot (display rows and the all-channel CAR buffer), Analysis and Export. The raw buffer is kept, so Remove is
-    instant.
+  - `MainWindow._blank()` interpolates the active results before `apply_filter_chain`: in the plot (display rows and
+    the all-channel CAR buffer), Analysis and Export. `apply_blanking` copies only when a span overlaps the buffer and
+    otherwise returns the input itself; the raw buffer is never modified, so Remove is instant.
   - **Advanced:**
     - Baseline per channel = the median 50 ms window RMS of the **250–5000 Hz** band over 20 one-second windows at least
       3 s from any event.
@@ -144,6 +150,18 @@ tests/                unittest; test_blackrock.py has write_nsx_23() to build sy
   - **RP01 check (ICMS, 1.5×):** median post-pad 1.65 s (notes: ~1.7 s), 2.1% at the 100 ms floor, none capped. The
     slowest channels are rows 125, 123, 121, 113, 111 (stim electrode first), matching the notes. A 300 Hz high-pass
     instead gave 1.35 s, which is why the 250–5000 Hz band is used.
+- **Filter chain (`dsp/filters.py`, `dsp/referencing.py`):**
+  - With `all_channel_data`, `apply_filter_chain` runs the **whole chain in order on the all-channel array** and
+    slices the displayed rows at the end, so filters before a CAR/CMR feed into it and filters after it see the
+    re-referenced data. CAR commutes with linear filters; CMR does not, so order matters there.
+  - **Memory rules** (the all-channel buffer is ~1 GB for a 10 s view of 136 ch): the chain makes one working copy
+    and then filters it in place; pass `inplace_ok=True` when the array you hand it is already scratch (a blanked
+    copy, a pipeline chunk), never for `_raw_data`/`_raw_data_all`. `apply_car`/`apply_cmr` work row by row and take
+    `copy=False`. `apply_filter` uses 2-row blocks because `sosfiltfilt` holds ~3× its input in temporaries (8 blocks
+    of 17 rows peaked at 3–4× the array; 2-row blocks ~0.3×, for ~50 % more time). `with_vrms=False` skips the Vrms
+    pass that chunked jobs and the plot never use.
+  - `MainWindow._apply_filters` sets `_raw_data_all = None` as soon as no active CAR/CMR needs it; `_refresh_plot`'s
+    fast path requires it when one does (`_chain_needs_all`).
 - **Vrms:**
   - `MainWindow._rerender_from_buffer` computes `compute_vrms(view, exclude=blank mask)` on every pan or zoom.
   - The mask (`dsp.blanking.blank_mask`) is built per buffer in `_apply_filters`.
@@ -189,8 +207,9 @@ tests/                unittest; test_blackrock.py has write_nsx_23() to build sy
     refractory changes.
   - `ui/raster_plot.py` draws one `PlotCurveItem(connect="pairs")` of the ticks within the view, x-linked to Time Series.
   - **Performance:**
-    - `dsp.filters.apply_filter` filters blocks of channels in threads (scipy releases the GIL; results are identical).
-    - RP01 full detection with BP 250–5000: 472 s → 226 s, peak ~2.9 GB.
+    - `dsp.filters.apply_filter` filters small blocks of channels in threads (scipy releases the GIL; results are
+      identical).
+    - RP01 full detection with BP 250–5000: 472 s → 226 s, peak ~2.9 GB (mostly `freeze_sigma`; audit step 4).
   - **RP01 finding:** with Basic ICMS blanking (post 500 ms), the raster shows a dense block on all electrodes for about
     1–3 s after each blank. That is the post-ICMS discharge, not spikes. Advanced blanking is the fix.
 - **Theme (`ui/theme.py`):**
@@ -245,6 +264,51 @@ tests/                unittest; test_blackrock.py has write_nsx_23() to build sy
 ---
 
 ## 4. Roadmap
+
+### Audit fixes (plan approved 2026-11-17; one commit per step, the user tests each)
+Findings came from a full audit (execution-verified on RP01 unless noted). Step 1 is done (§1 item 13). Remaining:
+2. **Buffer logic** (`main_window.py` `_refresh_plot`/`_on_view_range_requested`/`_on_stream_selected`/
+   `_apply_filters`, `control_panel.py`, `filter_panel.py`): no cap on the buffer — zooming out to the whole recording
+   loads it (48 s read, 1 GB for one channel, ×136 with CAR ⇒ OOM) → cap `MAX_BUFFER_SAMPLES` + `setLimits(maxXRange)`
+   + toast; every jump out of the buffer starts the same disk read twice (debounce + direct `_refresh_plot`) and jumps
+   inside render twice → in-flight guard; `update_view_range` writes unclamped values (views past the ends never hit
+   the buffer, Ctrl+R reloads); `_apply_filters` uses the selected channels, not `_buffer_channels` (IndexError when
+   an overlay load is in flight); stream switch leaves the x-range on the old stream (blank plot); scatter toggle
+   re-filters; spin box per keystroke → `setKeyboardTracking(False)`; CAR channel change should re-slice
+   `_raw_data_all`; `FilterPanel.set_state` `setChecked` emits `filters_changed` (fresh spikes marked stale).
+3. **Long-job lifecycle** (`workers.py`, done/failed callbacks, `closeEvent`, `theme.progress_dialog`): workers emit
+   results after Cancel (EventDetectWorker never checks during detection) and `done()` applies them unguarded;
+   `_load_block` doesn't cancel long jobs → add a recording generation counter, `is_cancelled()` before every emit,
+   compute `stale` *before* `progress.close()` (closing emits `canceled`); dialogs need `WA_DeleteOnClose`; analog
+   `_analog_seq` not bumped on early returns; error lambdas lack a seq guard; `closeEvent` waits 3 s then closes the
+   reader under running workers.
+4. **σ freeze** (`core/spike_detect.py`): `freeze_sigma` runs the whole view (+2 s pad) × all channels as one chunk —
+   10 s ≈ 2.9 GB, 30 s ≈ 7 GB ⇒ MemoryError → accumulate |x| per 5 s chunk; empty σ window must raise, not "0 spikes".
+5. **Render path** (`probe_map_widget.py`, `plot_widget.py`, `analog_plot.py`, `raster_plot.py`, `decimation.py`): a
+   NaN RMS (fully blanked view + probe loaded) raises in the probe map *before* `set_data`, freezing the trace; blank
+   regions / analog markers / raster bands / probe spots are rebuilt every render (3–36 ms each, hidden tabs too) →
+   reuse items, skip when unchanged or hidden; min/max decimation never draws the last ≤ 3999 samples of a view
+   (`reduceat` with `linspace` edges); connect `sigXRangeChanged` instead of `sigRangeChanged` (y auto-fit re-render,
+   not reproducible offscreen).
+6. **Failed load / session** (`main_window.py`, `app_state.py`): a failed Open empties `AppState` but leaves the old
+   panels, title and buffer (then `ValueError`/`KeyError` on clicks) → load into locals, then `close()`; parse a
+   session fully before `load_block`, tolerate unknown filter types with a `load_messages` note; atomic session save.
+7. **Event / assignment consistency** (`app_state.py`, `analog_panel.py`): re-assigning or unassigning an analog
+   channel keeps its old-modality events; analog-list edits leave those channels inside CAR groups and the Blanking
+   tab un-refreshed; "nan" in an event cell raises; excluded blanking trials keyed by (renumbered) event number.
+8. **Analyze** (`main_window.py`, `spectrum_panel.py`, `workers.py`): synchronous on the GUI thread, CAR/CMR silently
+   skipped (no all-channel data; warnings dropped), no interval limit (whole recording × 8 ch = 1.85 GB), Cancel inert
+   → validate, cap, run through `iter_processed_chunks` in `SpectralWorker`.
+9. **Small fixes**: `is_analog_label` makes every ID > 128 analog even with an electrode label; probe Table Editor
+   broken (`clicked(checked)` into `append_row`, OK disabled); event detection holds 2× each line (preallocate
+   float32); `splash.finish` before `show()` costs 1.0 s; no `sys.excepthook` with `console=False`; Blackrock drops the
+   last sample when reading to the end; FFT amplitude ×0.5 (Hann gain); σ = 0 threshold; filter warnings dropped in
+   the chunk pipeline (export summary lists skipped filters); `.ccf` `LookupError`/truncated `.nsX` abort the folder;
+   unescaped HTML in labels; CAR dialog OK can raise; dead `FilterWorker`/`DecimationWorker`/`SpectralWorker` use.
+10. **TDT** (needs a TDT block): `load_block(headers_only=False)` reads the whole block into RAM and keeps it; every
+    read re-parses the TSQ; `(i+0.5)/fs` maps through tdt's `ceil` → one-sample shift in chunked jobs.
+11. **Probe indices** (after checking a lab file): probeinterface `device_channel_indices` are 0-based (−1 = unwired);
+    the importer treats them as 1-based.
 
 ### Step 4: Spike Detection tab (DONE: 4a + 4b; design notes below kept for reference)
 - **Threshold:**
