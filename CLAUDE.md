@@ -12,8 +12,8 @@ delete details that the code or git history already records.
 |---|---|
 | Active branch | `NSP_Basic` (not pushed; branched from `main` @ `beb2da4`) |
 | Last commit | `e5bb0f2` Cap the view length, load data ahead of pans, trackpad gestures |
-| Tests | 129 passing: `tdtgui/bin/python -m unittest discover tests` |
-| Next step | User tests the zoom cap, smooth loading and trackpad gestures; then audit step 3, long-job lifecycle (§4) |
+| Tests | 133 passing: `tdtgui/bin/python -m unittest discover tests` |
+| Next step | User tests audit step 3 (Cancel / open another recording / quit during long jobs); then step 4, σ freeze (§4) |
 
 ### Done
 1. Analog input viewer and event detection (`78664d0`).
@@ -74,6 +74,15 @@ delete details that the code or git history already records.
       the main window's freshly cached pages; fixed a worker leak (~190 MB per pan).
     - Trackpad: horizontal swipe pans, vertical swipe and pinch zoom. Raster unlinked: zooms freely, syncs within
       the cap, row click opens the electrode at that time. CAR filters only the displayed rows (exact; 136× less).
+16. Audit step 3 (long-job lifecycle: Detect Events, Advanced blanking, Detect Spikes, Export):
+    - **Bug:** Cancel during event detection still replaced the events (and cleared blanking); a job cancelled before
+      opening another recording could install its result there. Workers now check Cancel before every result, and
+      `MainWindow._run_job` applies a result only if the job wasn't cancelled and the recording is the same.
+    - One job of each kind at a time: a cancelled job finishes its current chunk (Detect Spikes ~0.2 s on RP01)
+      and a restart meanwhile is refused with a toast (two exports to the same file used to delete each other).
+    - `export_binary` deletes its file when cancelled or failed (also when quitting). Quit, Open and Load Session
+      ask before stopping a running export; quit waits for the jobs (up to 10 s) before closing the reader.
+    - Progress dialogs are freed (`deleteLater`); every closed one used to stay alive with its worker.
 
 ### Branches
 - **`main`:** the TDT/Blackrock viewer with filters, FFT/PSD, probe map, export and `.ccf` info.
@@ -323,9 +332,12 @@ tests/                unittest; test_blackrock.py has write_nsx_23() to build sy
 ### Conventions
 - Channel indices are 0-based internally and shown 1-based. Times are seconds from stream start. Data is in volts.
 - Serialize with `to_dict`/`from_dict`, and keep it backward compatible (default any missing field).
-- Long jobs run in a `CancellableWorker` with a `QProgressDialog`.
-  - A job that must survive plot refreshes (e.g. detection) is **not** submitted to `_worker_manager`, because
-    `cancel_all()` runs on every refresh. Keep its own reference so it can be cancelled on close.
+- Long jobs run in a `CancellableWorker` started with `MainWindow._run_job(kind, worker, text, on_done, ...)`,
+  which owns the progress dialog, `_jobs[kind]`, the stale-result checks and error boxes.
+  - Workers check `is_cancelled()` before emitting a result. Closing a `QProgressDialog` emits `canceled`, so check
+    cancellation *before* `close()`; `QProgressDialog.cancel()` does **not** emit it (tests click the button).
+  - They are **not** submitted to `_worker_manager`, because `cancel_all()` runs on every plot refresh.
+  - Anything that replaces the recording calls `_stop_jobs()` (bumps `_recording_gen`, cancels every job).
 - Don't rebuild a widget from inside its own signal (table `itemChanged`, line `sigPositionChangeFinished`); defer with
   `QTimer.singleShot(0, ...)`.
 - Write commit messages in the imperative. **No Co-Authored-By or any other Claude attribution** (user rule,
@@ -336,14 +348,8 @@ tests/                unittest; test_blackrock.py has write_nsx_23() to build sy
 ## 4. Roadmap
 
 ### Audit fixes (plan approved 2026-11-17; one commit per step, the user tests each)
-Findings came from a full audit (execution-verified on RP01 unless noted). Steps 1–2 are done (§1 items 13–14).
-Remaining:
-3. **Long-job lifecycle** (`workers.py`, done/failed callbacks, `closeEvent`, `theme.progress_dialog`): workers emit
-   results after Cancel (EventDetectWorker never checks during detection) and `done()` applies them unguarded;
-   `_load_block` doesn't cancel long jobs → add a recording generation counter, `is_cancelled()` before every emit,
-   compute `stale` *before* `progress.close()` (closing emits `canceled`); dialogs need `WA_DeleteOnClose`;
-   `closeEvent` waits 3 s then closes the reader under running workers. (Plot/analog load seq guards and the
-   WorkerManager leak were fixed with the sliding buffer, §1 item 15.)
+Findings came from a full audit (execution-verified on RP01 unless noted). Steps 1–3 are done (§1 items 13, 14,
+16). Remaining:
 4. **σ freeze** (`core/spike_detect.py`): `freeze_sigma` runs the whole view (+2 s pad) × all channels as one chunk —
    10 s ≈ 2.9 GB, 30 s ≈ 7 GB ⇒ MemoryError → accumulate |x| per 5 s chunk.
 5. **Render path** (`probe_map_widget.py`, `plot_widget.py`, `analog_plot.py`, `raster_plot.py`, `decimation.py`): a

@@ -446,6 +446,9 @@ class EventDetectWorker(CancellableWorker):
                 del chunks
 
                 for row, a in enumerate(items):
+                    if self.is_cancelled():
+                        self.signals.cancelled.emit()
+                        return
                     label = self.labels.get((stream, a.channel), f"Ch {a.channel + 1}")
                     onsets, offsets, thr = detect_line_events(lines[row], fs, a.settings)
                     summary.append((label, a.modality, thr, len(onsets)))
@@ -455,6 +458,9 @@ class EventDetectWorker(CancellableWorker):
                     ]
                 del lines
 
+            if self.is_cancelled():
+                self.signals.cancelled.emit()
+                return
             self.signals.progress.emit(100)
             self.signals.result.emit({"events": number_events(events), "summary": summary})
             self.signals.finished.emit()
@@ -564,6 +570,9 @@ class BlankingWorker(CancellableWorker):
                 n_capped += int(capped.sum())
                 self.signals.progress.emit(int(100 * (20 + i + 1) / n_steps))
 
+            if self.is_cancelled():
+                self.signals.cancelled.emit()
+                return
             self.signals.result.emit(BlankResult(
                 modality=self.modality,
                 stream=self.stream,
@@ -606,7 +615,7 @@ class ExportWorker(CancellableWorker):
                 cancelled=self.is_cancelled,
                 **self.kwargs,
             )
-            if result["cancelled"]:
+            if result["cancelled"]:  # export_binary has deleted the partial file
                 self.signals.cancelled.emit()
                 return
             self.signals.result.emit(result)
@@ -658,6 +667,9 @@ class SpikeDetectWorker(CancellableWorker):
                 self.reader, self.stream, self.channels, i0, i1, fs, self.num_channels,
                 self.blank_results, self.filters,
             )
+            if self.is_cancelled():
+                self.signals.cancelled.emit()
+                return
             self.signals.progress.emit(3)
             times = detect_spikes(
                 self.reader, self.stream, self.channels, 0, self.n_samples, fs, self.num_channels,
@@ -666,7 +678,7 @@ class SpikeDetectWorker(CancellableWorker):
                 progress=lambda p: self.signals.progress.emit(3 + int(0.97 * p)),
                 cancelled=self.is_cancelled,
             )
-            if times is None:
+            if times is None or self.is_cancelled():
                 self.signals.cancelled.emit()
                 return
             self.signals.result.emit(SpikeResult(

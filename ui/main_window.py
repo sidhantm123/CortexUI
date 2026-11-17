@@ -1,6 +1,7 @@
 """Main application window."""
 import copy
 import os
+import weakref
 from pathlib import Path
 from typing import Optional
 
@@ -178,10 +179,9 @@ class MainWindow(QMainWindow):
         self._analog_seq: int = 0
         self._pending_analog_refresh = False
         self._analog_workers = WorkerManager()
-        self._detect_worker: Optional[EventDetectWorker] = None
-        self._blank_worker: Optional[BlankingWorker] = None
-        self._export_worker: Optional[ExportWorker] = None
-        self._spike_worker: Optional[SpikeDetectWorker] = None
+        # Long jobs behind a progress dialog (see _run_job), by kind, e.g. "export"
+        self._jobs: dict = {}
+        self._recording_gen = 0  # bumped when the recording is replaced or the app quits
 
         self._last_filter_warning = ""  # shown once until it changes
 
@@ -632,6 +632,10 @@ class MainWindow(QMainWindow):
 
     def _load_block(self, folder_path: str):
         """Load a TDT or Blackrock recording from folder."""
+        if not self._export_may_stop("open the recording"):
+            return
+        self._stop_jobs()
+
         # Show progress
         progress = progress_dialog("Loading recording...", self, cancellable=False, maximum=0)
         progress.show()
@@ -662,6 +666,7 @@ class MainWindow(QMainWindow):
 
         finally:
             progress.close()
+            progress.deleteLater()
 
     @Slot(str)
     def _on_stream_selected(self, stream_name: str):
@@ -884,6 +889,7 @@ class MainWindow(QMainWindow):
 
         finally:
             progress.close()
+            progress.deleteLater()
 
     def _refresh_plot(self):
         """Refresh the time series plot, using the in-memory buffer when possible."""
@@ -1702,35 +1708,21 @@ class MainWindow(QMainWindow):
             ("Filters: " + ", ".join(f.get_display_name() for f in active_filters)) if active_filters else "",
         ])) or "raw (no blanking, no filters)"
 
-        progress = progress_dialog("Detecting spikes across the recording...", self)
-
         worker = SpikeDetectWorker(
             self._app_state.reader, state.stream_name, state.ordered_neural_channels(),
             state.sample_rate, state.num_channels, int(round(state.duration * state.sample_rate)),
             (t0, t1), copy.deepcopy(state.spike_settings), blank_results,
             copy.deepcopy(active_filters), processing,
         )
-        worker.signals.progress.connect(progress.setValue)
-        progress.canceled.connect(worker.cancel)
 
         def done(result):
-            progress.close()
             self._app_state.spike_results[state.stream_name] = result
             self._update_spike_view()
             self._plot_tabs.setCurrentIndex(self._raster_tab_index)
             self._toast.show_message(f"Detected {result.total():,} spikes")
 
-        def failed(err):
-            progress.close()
-            QMessageBox.warning(self, "Spike Detection Error", f"Failed to detect spikes:\n\n{err}")
-
-        worker.signals.result.connect(done)
-        worker.signals.error.connect(failed)
-        worker.signals.cancelled.connect(progress.close)
-        # Not submitted to _worker_manager: plot refreshes call cancel_all() on it
-        self._spike_worker = worker
-        self._worker_manager.thread_pool.start(worker)
-        progress.show()
+        self._run_job("spike detection", worker, "Detecting spikes across the recording...", done,
+                      "Failed to detect spikes")
 
     @Slot(int, float)
     def _on_raster_channel_clicked(self, channel: int, t: float):
@@ -1877,32 +1869,19 @@ class MainWindow(QMainWindow):
             QMessageBox.information(self, "No Trials", "Tick at least one trial to blank.")
             return
 
-        progress = progress_dialog(f"Measuring baseline noise and artifact recovery ({modality})...", self)
-
         worker = BlankingWorker(
             self._app_state.reader, state.stream_name, state.sample_rate, state.duration,
             channels, modality, events, self._app_state.events, copy.deepcopy(settings),
         )
-        worker.signals.progress.connect(progress.setValue)
-        progress.canceled.connect(worker.cancel)
 
         def done(result):
-            progress.close()
             self._app_state.blanking_results[modality] = result
             self._blanking_changed()
             self._toast.show_message(f"Blanking {modality}: {result.summary()}")
 
-        def failed(err):
-            progress.close()
-            QMessageBox.warning(self, "Blanking Error", f"Failed to compute blanking:\n\n{err}")
-
-        worker.signals.result.connect(done)
-        worker.signals.error.connect(failed)
-        worker.signals.cancelled.connect(progress.close)
-        # Not submitted to _worker_manager: plot refreshes call cancel_all() on it
-        self._blank_worker = worker
-        self._worker_manager.thread_pool.start(worker)
-        progress.show()
+        self._run_job("blanking", worker,
+                      f"Measuring baseline noise and artifact recovery ({modality})...", done,
+                      "Failed to compute blanking")
 
     @Slot(str)
     def _on_remove_blanking(self, modality: str):
@@ -1959,14 +1938,9 @@ class MainWindow(QMainWindow):
             for a in assignments
         }
 
-        progress = progress_dialog("Reading analog channels and detecting events...", self)
-
         worker = EventDetectWorker(self._app_state.reader, assignments, stream_info, labels)
-        worker.signals.progress.connect(progress.setValue)
-        progress.canceled.connect(worker.cancel)
 
         def done(result):
-            progress.close()
             self._app_state.events = result["events"]
             self._app_state.blanking_results.clear()  # trial times changed
             self._on_spike_inputs_changed()
@@ -1982,17 +1956,75 @@ class MainWindow(QMainWindow):
             self._update_analog_events()
             self._toast.show_message(f"Detected {len(result['events'])} events")
 
-        def failed(err):
-            progress.close()
-            QMessageBox.warning(self, "Event Detection Error", f"Failed to detect events:\n\n{err}")
+        self._run_job("event detection", worker, "Reading analog channels and detecting events...", done,
+                      "Failed to detect events")
 
+    def _run_job(self, kind: str, worker, text: str, on_done, error_text: str, on_cancelled=None):
+        """
+        Run a long job behind a progress dialog. on_done(result) runs only if the job wasn't
+        cancelled (Cancel, another recording opened, quitting) and the recording is the same;
+        the error of a cancelled job is not shown. One job of each kind at a time.
+        """
+        if kind in self._jobs:  # cancelled, but still finishing its current chunk
+            self._toast.show_message(f"The previous {kind} is still stopping; try again in a moment", WARNING)
+            return
+        gen = self._recording_gen
+        progress = progress_dialog(text, self)
+        self._jobs[kind] = worker
+        # The callbacks live in connections on worker.signals: holding the worker itself there
+        # would be a cycle the GC can't see (see WorkerManager.submit). _jobs keeps it alive.
+        ref = weakref.ref(worker)
+
+        def finish():  # each worker emits exactly one of result / error / cancelled
+            self._jobs.pop(kind, None)
+            progress.close()  # emits canceled: check is_cancelled() before this
+            progress.deleteLater()
+
+        def done(result):
+            if ref().is_cancelled():  # Cancel pressed after the worker's last check
+                cancelled()
+                return
+            current = gen == self._recording_gen
+            finish()
+            if current:
+                on_done(result)
+
+        def failed(err):
+            show = not ref().is_cancelled() and gen == self._recording_gen
+            finish()
+            if show:
+                QMessageBox.warning(self, f"{kind.title()} Error", f"{error_text}:\n\n{err}")
+
+        def cancelled():
+            finish()
+            if on_cancelled is not None:
+                on_cancelled()
+
+        worker.signals.progress.connect(progress.setValue)
+        progress.canceled.connect(worker.cancel)
         worker.signals.result.connect(done)
         worker.signals.error.connect(failed)
-        worker.signals.cancelled.connect(progress.close)
+        worker.signals.cancelled.connect(cancelled)
         # Not submitted to _worker_manager: plot refreshes call cancel_all() on it
-        self._detect_worker = worker
         self._worker_manager.thread_pool.start(worker)
         progress.show()
+
+    def _stop_jobs(self):
+        """Cancel every long job; results still on their way are then ignored."""
+        self._recording_gen += 1
+        for worker in self._jobs.values():
+            worker.cancel()
+
+    def _export_may_stop(self, action: str) -> bool:
+        """Ask before an action stops a running export. False: keep exporting, don't act."""
+        worker = self._jobs.get("export")
+        if worker is None or worker.is_cancelled():
+            return True
+        answer = QMessageBox.question(
+            self, "Export Running",
+            f"An export is still running. Stop it, delete the partial file and {action}?",
+        )
+        return answer == QMessageBox.StandardButton.Yes
 
     def _on_save_session(self):
         """Save current session to file."""
@@ -2027,7 +2059,8 @@ class MainWindow(QMainWindow):
             "JSON Files (*.json)",
         )
 
-        if filepath:
+        if filepath and self._export_may_stop("load the session"):
+            self._stop_jobs()
             try:
                 self._app_state.load_session(filepath)
 
@@ -2166,8 +2199,9 @@ class MainWindow(QMainWindow):
         n_stream = int(round(state.duration * fs))
         i_start = max(0, int(round(t1 * fs)))
         i_stop = min(n_stream, max(i_start + 1, int(round(t2 * fs))))
-
-        progress = progress_dialog("Exporting...", self)
+        # The summary describes the recording and blanking as they are now, at the start
+        block_name = self._app_state.block.name
+        blank_summary = self._blanking_summary_lines(state.stream_name) if blank_results else None
 
         worker = ExportWorker(
             reader=self._app_state.reader,
@@ -2183,15 +2217,12 @@ class MainWindow(QMainWindow):
             blank_results=blank_results if opts["apply_blanking"] else [],
             filters=copy.deepcopy(active_filters) if opts["apply_filters"] else None,
         )
-        worker.signals.progress.connect(progress.setValue)
-        progress.canceled.connect(worker.cancel)
 
         def done(result):
-            progress.close()
             summary_path = str(Path(filepath).with_suffix(".txt"))
             self._write_export_summary(
-                summary_path, state, channels, opts, (i_start, i_stop), result,
-                blank_results, active_filters, datetime.now(),
+                summary_path, block_name, state, channels, opts, (i_start, i_stop), result,
+                blank_summary, active_filters, datetime.now(),
             )
             file_size_mb = os.path.getsize(filepath) / (1024 * 1024)
             clipped = (
@@ -2208,46 +2239,39 @@ class MainWindow(QMainWindow):
                 f"Sample rate to use when importing: {fs:.4f} Hz{clipped}",
             )
 
-        def failed(err):
-            progress.close()
-            QMessageBox.warning(self, "Export Error", f"Failed to export data:\n\n{err}")
-
         def cancelled():
-            progress.close()
-            try:
+            try:  # the worker deletes a partial file; this is for a Cancel after the last chunk
                 os.remove(filepath)
             except OSError:
                 pass
             self._toast.show_message("Export cancelled")
 
-        worker.signals.result.connect(done)
-        worker.signals.error.connect(failed)
-        worker.signals.cancelled.connect(cancelled)
-        # Not submitted to _worker_manager: plot refreshes call cancel_all() on it
-        self._export_worker = worker
-        self._worker_manager.thread_pool.start(worker)
-        progress.show()
+        self._run_job("export", worker, "Exporting...", done, "Failed to export data", cancelled)
 
     def _write_export_summary(
         self,
         filepath: str,
+        block_name: str,
         state,
         channels: list,
         opts: dict,
         sample_range: tuple,
         result: dict,
-        blank_results: list,
+        blank_summary: Optional[list],
         active_filters: list,
         export_time,
     ):
-        """Write a companion .txt summary alongside the binary export."""
+        """Write a companion .txt summary alongside the binary export.
+
+        blank_summary: _blanking_summary_lines() when the export started, None without blanking.
+        """
         fs = state.sample_rate
         i_start, i_stop = sample_range
         label = "current view" if opts["range"] == "current_view" else "full recording"
         time_range_str = f"{i_start / fs:.4f} – {i_stop / fs:.4f} s  ({label})"
 
-        if opts["apply_blanking"] and blank_results:
-            blank_lines = ["Blanking      : applied (before filters)"] + self._blanking_summary_lines(state.stream_name)
+        if opts["apply_blanking"] and blank_summary:
+            blank_lines = ["Blanking      : applied (before filters)"] + blank_summary
         else:
             blank_lines = ["Blanking      : not applied"]
         if opts["apply_filters"] and active_filters:
@@ -2272,7 +2296,7 @@ class MainWindow(QMainWindow):
             "Binary Export Summary",
             "=" * 40,
             f"Export Date   : {export_time.strftime('%Y-%m-%d %H:%M:%S')}",
-            f"Block         : {self._app_state.block.name}",
+            f"Block         : {block_name}",
             f"Stream        : {state.stream_name}",
             f"Electrodes    : {electrodes if electrodes else 'n/a (labels have no electrode numbers)'}",
             f"Channels      : {ch_1based}  (1-based recording order)",
@@ -2313,13 +2337,22 @@ class MainWindow(QMainWindow):
                 self._load_block(path)
 
     def closeEvent(self, event):
-        """Handle window close."""
-        # Cancel any running workers
+        """Stop every background job, wait for them, then close the reader."""
+        if not self._export_may_stop("quit"):
+            event.ignore()
+            return
+        self._stop_jobs()
+        self._load_seq += 1  # plot loads still landing are dropped
+        self._analog_seq += 1
         self._worker_manager.cancel_all()
         self._analog_workers.cancel_all()
-        for worker in (self._detect_worker, self._blank_worker, self._export_worker, self._spike_worker):
-            if worker is not None:
-                worker.cancel()
-        self._worker_manager.wait_all(3000)
+        self._worker_manager.thread_pool.clear()  # queued jobs never start
+        # Jobs check for Cancel at least once per chunk (< 1 s), so this is normally short.
+        # Closing the reader under a job still reading would only make it fail, never crash.
+        QApplication.setOverrideCursor(Qt.CursorShape.WaitCursor)
+        try:
+            self._worker_manager.wait_all(10000)
+        finally:
+            QApplication.restoreOverrideCursor()
         self._app_state.close()
         event.accept()

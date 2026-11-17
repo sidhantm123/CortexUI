@@ -1,4 +1,5 @@
 """Chunked int16 binary export of a stream, optionally blanked and/or filtered."""
+import os
 from typing import Callable, List, Optional, Sequence, Tuple
 
 import numpy as np
@@ -154,6 +155,8 @@ def export_binary(
     Processing per chunk (see iter_processed_chunks): blanking -> filter chain -> x scale
     -> clip -> int16.
 
+    A cancelled or failed export deletes the file it was writing.
+
     Returns:
         {"n_samples": samples per channel written, "n_clipped": samples clipped to int16,
          "cancelled": bool}
@@ -169,6 +172,7 @@ def export_binary(
         sequential = np.memmap(filepath, dtype=np.int16, mode="w+", shape=(n_ch, max(1, n_total)))
 
     n_clipped = 0
+    complete = False
     try:
         for k, n_chunks, a, b, out, _ in iter_processed_chunks(
             reader, stream, channels, i_start, i_stop, fs, num_channels,
@@ -191,11 +195,19 @@ def export_binary(
 
             if progress is not None:
                 progress(int(100 * (k + 1) / n_chunks))
+        if cancelled is not None and cancelled():  # Cancel during the last chunk
+            return {"n_samples": n_total, "n_clipped": n_clipped, "cancelled": True}
+        complete = True
     finally:
         if interlaced is not None:
             interlaced.close()
         if sequential is not None:
             sequential.flush()
             del sequential
+        if not complete:  # a partial file would look like a real export
+            try:
+                os.remove(filepath)
+            except OSError:
+                pass
 
     return {"n_samples": n_total, "n_clipped": n_clipped, "cancelled": False}
