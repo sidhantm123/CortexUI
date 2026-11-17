@@ -79,7 +79,7 @@ class AppState:
         # Open the new recording first, with the reader that matches the folder's format:
         # if that fails, nothing has changed
         reader = open_reader(folder_path)
-        block = reader.load_block(folder_path, headers_only=False)
+        block = reader.load_block(folder_path)  # indexes only: no reader keeps the samples
 
         # The probe is loaded independently of the recording (the probe map keeps showing it)
         probe = self.probe

@@ -11,8 +11,8 @@ delete details that the code or git history already records.
 | | |
 |---|---|
 | Active branch | `NSP_Basic` (not pushed; branched from `main` @ `beb2da4`) |
-| Last commit | `97d2973` Run Analyze in the background on blanked, filtered data, CAR included |
-| Tests | 153 passing: `tdtgui/bin/python -m unittest discover tests` |
+| Last commit | `7cb3027` Fix a batch of small audit findings |
+| Tests | 167 passing: `tdtgui/bin/python -m unittest discover tests` |
 | Next step | Audit steps 4–11 run back to back (user request, 2026-11-17); then the user tests them together |
 
 ### Done
@@ -107,7 +107,7 @@ delete details that the code or git history already records.
     with all channels: CAR used to be skipped silently) and runs via `_run_job("analysis")` with Cancel.
     Intervals are validated and capped at `MAX_ANALYSIS_SAMPLES` (3e7: 8 ch → 125 s). The pipeline collects
     filter warnings (`warnings=` list). RP01 8 ch × 60 s BP+CAR PSD: 5.6 s, GUI stalls ≤ 37 ms.
-22. Audit step 9 (small fixes): `elec…`/`chan…` labels are neural whatever their ID; probe Table Editor works
+22. (`7cb3027`) Audit step 9 (small fixes): `elec…`/`chan…` labels are neural whatever their ID; probe Table Editor works
     (Add Row passed `clicked(bool)`; OK follows the tab); event lines preallocated (RP01 3 lines 0.70 → 0.58
     GB); window shown before `splash.finish` (−1.0 s at startup); `main.install_error_log` (error.log in
     AppDataLocation + one message per error); Blackrock `_sample_index` (`int(n/fs*fs)` < n for 1–7 % of n);
@@ -115,6 +115,14 @@ delete details that the code or git history already records.
     analysis report filter warnings; an unreadable `.ccf`/`.nsX` is skipped with `metadata["notes"]` (neo
     parsed every `.nsX` of a recording, so one damaged file blocked all: `_only_nsx`); names escaped in rich
     text; the filter dialog validates CAR/CMR on OK; `FilterWorker`/`DecimationWorker` deleted.
+23. Audit step 10 (TDT): **TDT viewing was broken** with numpy 2 (pinned 2.4.1): tdt 0.7.3's windowed stream
+    reads compute `np.arange(np.uint16(nchan), 0, -1)` and uint64 differences that wrap, so every window of a
+    multi-channel store not starting at 0 s came back empty. `TDTReader` now parses the `.tsq` once
+    (`headers=1`) and reads `.tev` records itself (`_TevStream`: per-channel byte offsets, `npts` samples per
+    record) at exact `floor(t*fs + 1e-6)` indices; nothing is cached (it used to keep the whole block in RAM
+    and re-parse the `.tsq` on every read). Stores in `.sev` files still go through tdt (reused headers,
+    t1 a quarter sample early for its `ceil`, trimmed): **untested, no `.sev` data**. Tested on synthetic
+    blocks (`tests/test_tdt.py` writes `.tsq`/`.tev` that tdt itself reads back exactly).
 
 ### Branches
 - **`main`:** the TDT/Blackrock viewer with filters, FFT/PSD, probe map, export and `.ccf` info.
@@ -381,10 +389,8 @@ tests/                unittest; test_blackrock.py has write_nsx_23() to build sy
 ## 4. Roadmap
 
 ### Audit fixes (plan approved 2026-11-17; one commit per step, the user tests each)
-Findings came from a full audit (execution-verified on RP01 unless noted). Steps 1–9 are done (§1 items 13, 14,
-16–22). Remaining:
-10. **TDT** (needs a TDT block): `load_block(headers_only=False)` reads the whole block into RAM and keeps it; every
-    read re-parses the TSQ; `(i+0.5)/fs` maps through tdt's `ceil` → one-sample shift in chunked jobs.
+Findings came from a full audit (execution-verified on RP01 unless noted). Steps 1–10 are done (§1 items 13, 14,
+16–23). Remaining:
 11. **Probe indices** (after checking a lab file): probeinterface `device_channel_indices` are 0-based (−1 = unwired);
     the importer treats them as 1-based.
 

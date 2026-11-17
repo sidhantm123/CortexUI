@@ -21,7 +21,7 @@ Open a recording folder via **File → Open Recording Folder…**, drag-and-drop
 
 | System | Files | Notes |
 |---|---|---|
-| TDT | `.tev`, `.tsq`, `.tdx`, `.sev`, … | Read with the `tdt` package |
+| TDT | `.tev`, `.tsq`, `.tdx`, `.sev`, … | The index is parsed with the `tdt` package; stream data is read from the `.tev` directly (`.sev` stores through `tdt`) |
 | Blackrock | `.ns1`–`.ns6`, `.ccf` | Read with `neo`. Each `.nsX` file is one stream. Channel labels come from the `.ccf`, and **View → Recording Info** (Ctrl+I) shows its channel settings. Analog inputs (`ainp*`, or ID > 128 without an `elec`/`chan` label) are detected automatically. A damaged `.nsX` or `.ccf` is skipped with a note. `.nev` (spikes/events) is not loaded yet. |
 
 ## Setup
