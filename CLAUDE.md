@@ -11,9 +11,9 @@ delete details that the code or git history already records.
 | | |
 |---|---|
 | Active branch | `NSP_Basic` (not pushed; branched from `main` @ `beb2da4`) |
-| Last commit | `177bdc4` Cap the plot buffer, load and render once per jump, keep buffer and selection consistent |
-| Tests | 115 passing: `tdtgui/bin/python -m unittest discover tests` |
-| Next step | User tests audit step 2; then audit step 3, long-job lifecycle (§4 "Audit fixes") |
+| Last commit | `e5bb0f2` Cap the view length, load data ahead of pans, trackpad gestures |
+| Tests | 129 passing: `tdtgui/bin/python -m unittest discover tests` |
+| Next step | User tests the zoom cap, smooth loading and trackpad gestures; then audit step 3, long-job lifecycle (§4) |
 
 ### Done
 1. Analog input viewer and event detection (`78664d0`).
@@ -66,7 +66,7 @@ delete details that the code or git history already records.
     channels; CAR channel change re-slices instead of reloading; scatter toggle no longer re-filters; spin boxes
     fire once per typed number; stream switch sets the plot to the stream's view; the analog follower's range is no
     longer set while linked (10 s view came out as 7.52 s at load; the Sync drift known issue is gone).
-15. Zoom cap + smooth loading (user report: single-channel zoom-out wasn't capped and pans waited for data):
+15. (`e5bb0f2`) Zoom cap + smooth loading (user report: single-channel zoom-out wasn't capped and pans waited for data):
     - User "Max length" for the view (default 20 s, Channels → View Range, remembered), enforced for wheel,
       trackpad, pinch, drag and keys; memory may lower it (CAR → 12.3 s).
     - Sliding float32 buffer with direction-aware prefetch and incremental reads in the worker (blank + filter
