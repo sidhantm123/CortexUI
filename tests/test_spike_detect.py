@@ -10,6 +10,7 @@ import numpy as np
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from blackrock_io import BlackrockReader
+from core.export import iter_processed_chunks
 from core.spike_detect import freeze_sigma, detect_spikes
 from dsp.spikes import robust_sigma, NEGATIVE
 from models.blanking import BlankResult
@@ -79,6 +80,21 @@ class TestSpikeDetect(unittest.TestCase):
         expected = robust_sigma(data)
         got = freeze_sigma(self.reader, "ns5", [0, 1], 30000, 60000, FS, 2)
         np.testing.assert_allclose(got, expected)
+
+    def test_chunked_sigma_matches_one_chunk(self):
+        bp = FilterConfig(FilterType.BANDPASS, cutoff_low=250.0, cutoff_high=5000.0)
+        car = FilterConfig(FilterType.CAR, channel_groups=[[0, 1]])
+        i0, i1 = 45000, 75000  # holds the blank span at 2 s
+        for blank, filters in (((), [bp]), ((), [bp, car]), ([self.blank], [bp])):
+            *_, data, mask = next(iter_processed_chunks(
+                self.reader, "ns5", [0, 1], i0, i1, FS, 2, blank, filters,
+                chunk_s=(i1 - i0) / FS + 1.0, with_mask=True,
+            ))
+            got = freeze_sigma(self.reader, "ns5", [0, 1], i0, i1, FS, 2, blank, filters, chunk_s=0.3)
+            np.testing.assert_allclose(got, robust_sigma(data, mask), rtol=1e-5)
+
+    def test_cancelled_freeze_returns_none(self):
+        self.assertIsNone(freeze_sigma(self.reader, "ns5", [0, 1], 0, 30000, FS, 2, cancelled=lambda: True))
 
     def test_refractory_off_keeps_both(self):
         sigma = freeze_sigma(self.reader, "ns5", [1], 0, 30000, FS, 2)

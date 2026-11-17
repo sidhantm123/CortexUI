@@ -4,21 +4,41 @@ from typing import Callable, Dict, List, Optional
 import numpy as np
 
 from core.export import iter_processed_chunks
-from dsp.spikes import robust_sigma, detect_crossings
+from dsp.spikes import MAD_TO_SIGMA, detect_crossings
 
 
 def freeze_sigma(reader, stream: str, channels: List[int], i0: int, i1: int, fs: float,
-                 num_channels: int, blank_results=(), filters=None) -> np.ndarray:
+                 num_channels: int, blank_results=(), filters=None,
+                 progress: Optional[Callable[[int], None]] = None,
+                 cancelled: Optional[Callable[[], bool]] = None,
+                 chunk_s: float = 5.0, pad_s: float = 1.0) -> Optional[np.ndarray]:
     """
     Sigma per channel = median(|x|)/0.6745 of samples [i0, i1) after blanking and filtering,
     blanked samples excluded (the same numbers the threshold line uses for that view).
+
+    The view is processed in chunks, keeping only each channel's |x| as float32: as one chunk,
+    a 10 s view of every channel (CAR) took ~3 GB. Returns None if cancelled.
     """
-    for *_, data, mask in iter_processed_chunks(
+    kept: List[List[np.ndarray]] = [[] for _ in channels]
+    for k, n_chunks, _a, _b, data, mask in iter_processed_chunks(
         reader, stream, channels, i0, i1, fs, num_channels, blank_results, filters,
-        chunk_s=(i1 - i0) / fs + 1.0, with_mask=True,
+        chunk_s, pad_s, with_mask=True,
     ):
-        return robust_sigma(data, mask)
-    return np.full(len(channels), np.nan)
+        if cancelled is not None and cancelled():
+            return None
+        for row, part in enumerate(kept):
+            part.append(np.abs(data[row][~mask[row]]).astype(np.float32))
+        del data, mask  # see iter_processed_chunks
+        if progress is not None:
+            progress(int(100 * (k + 1) / n_chunks))
+
+    sigma = np.full(len(channels), np.nan)
+    for row, parts in enumerate(kept):
+        x = np.concatenate(parts) if parts else np.zeros(0, np.float32)
+        kept[row] = None  # free each channel's samples once used
+        if x.size:
+            sigma[row] = np.median(x, overwrite_input=True) / MAD_TO_SIGMA
+    return sigma
 
 
 def detect_spikes(
@@ -65,6 +85,7 @@ def detect_spikes(
                 g = idx + offset
                 found[row].append(g)
                 last[row] = int(g[-1])
+        del data, mask  # see iter_processed_chunks
         if progress is not None:
             progress(int(100 * (k + 1) / n_chunks))
 

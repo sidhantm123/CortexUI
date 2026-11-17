@@ -666,16 +666,17 @@ class SpikeDetectWorker(CancellableWorker):
             sigma = freeze_sigma(
                 self.reader, self.stream, self.channels, i0, i1, fs, self.num_channels,
                 self.blank_results, self.filters,
+                progress=lambda p: self.signals.progress.emit(int(0.1 * p)),
+                cancelled=self.is_cancelled,
             )
-            if self.is_cancelled():
+            if sigma is None or self.is_cancelled():
                 self.signals.cancelled.emit()
                 return
-            self.signals.progress.emit(3)
             times = detect_spikes(
                 self.reader, self.stream, self.channels, 0, self.n_samples, fs, self.num_channels,
                 self.settings.k * sigma, self.settings.polarity, self.settings.refractory_ms,
                 self.blank_results, self.filters,
-                progress=lambda p: self.signals.progress.emit(3 + int(0.97 * p)),
+                progress=lambda p: self.signals.progress.emit(10 + int(0.9 * p)),
                 cancelled=self.is_cancelled,
             )
             if times is None or self.is_cancelled():

@@ -129,6 +129,9 @@ def iter_processed_chunks(
                 if blank_results else np.zeros((len(channels), s1 - s0), dtype=bool)
             )
         yield k, len(bounds), a, b, np.atleast_2d(out)[:, s0:s1], mask
+        # Free this chunk before reading the next one (consumers drop their views too), so
+        # only one chunk is in memory at a time
+        del data, time_axis, out, mask
 
 
 def export_binary(
@@ -195,6 +198,7 @@ def export_binary(
 
             if progress is not None:
                 progress(int(100 * (k + 1) / n_chunks))
+            del out, chunk  # see iter_processed_chunks
         if cancelled is not None and cancelled():  # Cancel during the last chunk
             return {"n_samples": n_total, "n_clipped": n_clipped, "cancelled": True}
         complete = True

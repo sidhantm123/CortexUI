@@ -11,9 +11,9 @@ delete details that the code or git history already records.
 | | |
 |---|---|
 | Active branch | `NSP_Basic` (not pushed; branched from `main` @ `beb2da4`) |
-| Last commit | `8b1d43b` Ignore results of cancelled or superseded long jobs, stop them on open and quit |
-| Tests | 133 passing: `tdtgui/bin/python -m unittest discover tests` |
-| Next step | User tests audit step 3 (Cancel / open another recording / quit during long jobs); then step 4, σ freeze (§4) |
+| Last commit | `264594e` Record audit step 3 in CLAUDE.md |
+| Tests | 135 passing: `tdtgui/bin/python -m unittest discover tests` |
+| Next step | Audit steps 4–11 run back to back (user request, 2026-11-17); then the user tests them together |
 
 ### Done
 1. Analog input viewer and event detection (`78664d0`).
@@ -83,6 +83,10 @@ delete details that the code or git history already records.
     - `export_binary` deletes its file when cancelled or failed (also when quitting). Quit, Open and Load Session
       ask before stopping a running export; quit waits for the jobs (up to 10 s) before closing the reader.
     - Progress dialogs are freed (`deleteLater`); every closed one used to stay alive with its worker.
+17. Audit step 4 (σ freeze): `freeze_sigma` works in 5 s chunks keeping only |x| (float32) and can be cancelled
+    (0–10 % of Detect Spikes). The chunk pipeline frees each chunk before reading the next (two were alive at
+    once). RP01, 128 ch, BP 250–5000: 20 s view + CAR peak 2.75 → 1.11 GB numpy, 10 s BP 0.87 → 0.61 GB; σ
+    identical to 1e-7.
 
 ### Branches
 - **`main`:** the TDT/Blackrock viewer with filters, FFT/PSD, probe map, export and `.ccf` info.
@@ -227,7 +231,7 @@ tests/                unittest; test_blackrock.py has write_nsx_23() to build sy
     crossings.
 - **Spikes (4b):**
   - `core/spike_detect.py`:
-    - `freeze_sigma` processes the view range as one chunk.
+    - `freeze_sigma` processes the view in 5 s chunks, keeping each channel's |x| as float32 for the median.
     - `detect_spikes` uses `iter_processed_chunks(left_overlap=1, with_mask=True)`. The 1-sample overlap lets a
       crossing exactly at a chunk start be seen, and the refractory `last` is carried across chunks.
   - `SpikeResult` lives in `AppState.spike_results[stream]` and is saved in the session as sample indices (RP01: 435k
@@ -239,7 +243,7 @@ tests/                unittest; test_blackrock.py has write_nsx_23() to build sy
   - **Performance:**
     - `dsp.filters.apply_filter` filters small blocks of channels in threads (scipy releases the GIL; results are
       identical).
-    - RP01 full detection with BP 250–5000: 472 s → 226 s, peak ~2.9 GB (mostly `freeze_sigma`; audit step 4).
+    - RP01 full detection with BP 250–5000: 472 s → 226 s, peak ~2.9 GB RSS before audit step 4.
   - **RP01 finding:** with Basic ICMS blanking (post 500 ms), the raster shows a dense block on all electrodes for about
     1–3 s after each blank. That is the post-ICMS discharge, not spikes. Advanced blanking is the fix.
 - **Theme (`ui/theme.py`):**
@@ -348,10 +352,8 @@ tests/                unittest; test_blackrock.py has write_nsx_23() to build sy
 ## 4. Roadmap
 
 ### Audit fixes (plan approved 2026-11-17; one commit per step, the user tests each)
-Findings came from a full audit (execution-verified on RP01 unless noted). Steps 1–3 are done (§1 items 13, 14,
-16). Remaining:
-4. **σ freeze** (`core/spike_detect.py`): `freeze_sigma` runs the whole view (+2 s pad) × all channels as one chunk —
-   10 s ≈ 2.9 GB, 30 s ≈ 7 GB ⇒ MemoryError → accumulate |x| per 5 s chunk.
+Findings came from a full audit (execution-verified on RP01 unless noted). Steps 1–4 are done (§1 items 13, 14,
+16, 17). Remaining:
 5. **Render path** (`probe_map_widget.py`, `plot_widget.py`, `analog_plot.py`, `raster_plot.py`, `decimation.py`): a
    NaN RMS (fully blanked view + probe loaded) raises in the probe map *before* `set_data`, freezing the trace; blank
    regions / analog markers / raster bands / probe spots are rebuilt every render (3–36 ms each, hidden tabs too) →

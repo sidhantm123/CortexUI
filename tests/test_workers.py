@@ -105,8 +105,11 @@ class TestCancelAfterLastRead(unittest.TestCase):
             reader, self.stream, FS, self.n / FS, [0, 1, 2], "ICMS", events, events, settings))
 
     def test_spike_detection(self):
-        self._check(lambda reader: SpikeDetectWorker(
-            reader, self.stream, [0, 1, 2], FS, N_CH, self.n, (0.0, 5.0), SpikeSettings()))
+        make = lambda reader: SpikeDetectWorker(
+            reader, self.stream, [0, 1, 2], FS, N_CH, self.n, (0.0, 5.0), SpikeSettings())
+        self._check(make)
+        out, reads = self._run(make, cancel_at=1)  # during the sigma freeze
+        self.assertEqual((set(out), reads), ({"cancelled"}, 1))
 
     def test_export_removes_its_file_when_cancelled_or_failed(self):
         path = os.path.join(self.tmp, "out.i16")
