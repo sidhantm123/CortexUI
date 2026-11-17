@@ -208,7 +208,11 @@ class ProbeImportDialog(QDialog):
         layout.addWidget(self._btn_box)
 
         self._ok_btn = self._btn_box.button(QDialogButtonBox.StandardButton.Ok)
-        self._ok_btn.setEnabled(False)
+        self._tabs.currentChanged.connect(self._update_ok)
+        model = self._edit_table.model()
+        model.rowsInserted.connect(self._update_ok)
+        model.rowsRemoved.connect(self._update_ok)
+        self._update_ok()
 
     def _make_json_tab(self) -> QWidget:
         tab = QWidget()
@@ -252,7 +256,7 @@ class ProbeImportDialog(QDialog):
         bar.addWidget(import_btn)
         bar.addStretch()
         add_btn = QPushButton("+ Add Row")
-        add_btn.clicked.connect(self._edit_table.append_row)
+        add_btn.clicked.connect(lambda: self._edit_table.append_row())  # not clicked(checked)
         bar.addWidget(add_btn)
         remove_btn = QPushButton("− Remove Row")
         remove_btn.clicked.connect(self._edit_table.remove_selected)
@@ -310,8 +314,15 @@ class ProbeImportDialog(QDialog):
             self._edit_table.load(rows)
 
         self._geometry = geo
-        self._ok_btn.setEnabled(True)
+        self._update_ok()
         self._set_status(f"Loaded {len(rows)} contacts from {path}")
+
+    def _update_ok(self, *_):
+        """OK needs a parsed file on the JSON tab, or at least one row on the table tab."""
+        if self._tabs.currentIndex() == 0:
+            self._ok_btn.setEnabled(self._geometry is not None)
+        else:
+            self._ok_btn.setEnabled(self._edit_table.rowCount() > 0)
 
     def _on_accept(self):
         # Determine which tab is active

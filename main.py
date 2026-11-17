@@ -7,6 +7,8 @@ Tucker-Davis Technologies neural recording data.
 """
 import sys
 import os
+import traceback
+from datetime import datetime
 
 # Add the app directory to path for imports
 APP_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -16,6 +18,40 @@ if APP_DIR not in sys.path:
 # Suppress Qt font-alias warning (pyqtgraph requests "Monospace" which doesn't
 # exist by that name on macOS/Windows, causing a slow lookup + noisy log line)
 os.environ.setdefault("QT_LOGGING_RULES", "qt.qpa.fonts=false")
+
+
+def install_error_log(app):
+    """
+    Unhandled exceptions (e.g. in a Qt slot) are appended to error.log in the app-data folder
+    and reported once in a message box: the packaged app has no console, so they would
+    otherwise vanish.
+    """
+    from PySide6.QtCore import QStandardPaths, QTimer
+    from PySide6.QtWidgets import QMessageBox
+
+    folder = QStandardPaths.writableLocation(QStandardPaths.StandardLocation.AppDataLocation)
+    path = os.path.join(folder, "error.log")
+    shown = set()
+
+    def hook(exc_type, exc, tb):
+        text = "".join(traceback.format_exception(exc_type, exc, tb))
+        sys.stderr.write(text)
+        try:
+            os.makedirs(folder, exist_ok=True)
+            with open(path, "a") as f:
+                f.write(f"--- {datetime.now():%Y-%m-%d %H:%M:%S}\n{text}\n")
+        except OSError:
+            pass
+        summary = f"{exc_type.__name__}: {exc}"
+        if summary not in shown:  # once per distinct error
+            shown.add(summary)
+            # Not from inside the hook (it may run in the middle of a paint or a signal)
+            QTimer.singleShot(0, lambda: QMessageBox.warning(
+                None, "Unexpected Error",
+                f"Something went wrong:\n\n{summary}\n\nDetails were written to:\n{path}",
+            ))
+
+    sys.excepthook = hook
 
 
 def main():
@@ -58,6 +94,7 @@ def main():
     app.setApplicationName("Multi-Channel Neural Viewer")
     app.setOrganizationName("TDT Viewer")
     app.setApplicationVersion("1.0.0")
+    install_error_log(app)
     # Dark theme (palette, stylesheet, fonts) — applied once
     from ui.theme import apply_theme, ui_font, WINDOW, TEXT
     apply_theme(app)
@@ -87,8 +124,8 @@ def main():
     from ui import MainWindow
 
     window = MainWindow()
-    splash.finish(window)
     window.show()
+    splash.finish(window)  # waits until the window is on screen: show it first (else ~1 s)
 
     # Handle command line argument (folder path)
     if len(sys.argv) > 1:

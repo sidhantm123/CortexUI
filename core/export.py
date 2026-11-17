@@ -114,7 +114,7 @@ def iter_processed_chunks(
         if blank_results:
             data = apply_blanking(data, time_axis, load_channels, blank_results)
         if filters:
-            out, _, chain_warnings = apply_filter_chain(
+            out, chain_warnings, _ = apply_filter_chain(
                 data[rows], filters, fs,
                 all_channel_data=data if needs_all else None,
                 channel_indices=channels,
@@ -168,7 +168,7 @@ def export_binary(
 
     Returns:
         {"n_samples": samples per channel written, "n_clipped": samples clipped to int16,
-         "cancelled": bool}
+         "cancelled": bool, "warnings": filter chain warnings (e.g. a skipped filter)}
     """
     n_total = i_stop - i_start
     n_ch = len(channels)
@@ -182,13 +182,15 @@ def export_binary(
 
     n_clipped = 0
     complete = False
+    warnings: List[str] = []
     try:
         for k, n_chunks, a, b, out, _ in iter_processed_chunks(
             reader, stream, channels, i_start, i_stop, fs, num_channels,
-            blank_results, filters, chunk_s, pad_s,
+            blank_results, filters, chunk_s, pad_s, warnings=warnings,
         ):
             if cancelled is not None and cancelled():
-                return {"n_samples": a - i_start, "n_clipped": n_clipped, "cancelled": True}
+                return {"n_samples": a - i_start, "n_clipped": n_clipped, "cancelled": True,
+                        "warnings": warnings}
 
             # `out` is the pipeline's own array (never the reader's), so work in place
             np.multiply(out, scale, out=out)
@@ -206,7 +208,8 @@ def export_binary(
                 progress(int(100 * (k + 1) / n_chunks))
             del out, chunk  # see iter_processed_chunks
         if cancelled is not None and cancelled():  # Cancel during the last chunk
-            return {"n_samples": n_total, "n_clipped": n_clipped, "cancelled": True}
+            return {"n_samples": n_total, "n_clipped": n_clipped, "cancelled": True,
+                    "warnings": warnings}
         complete = True
     finally:
         if interlaced is not None:
@@ -220,4 +223,4 @@ def export_binary(
             except OSError:
                 pass
 
-    return {"n_samples": n_total, "n_clipped": n_clipped, "cancelled": False}
+    return {"n_samples": n_total, "n_clipped": n_clipped, "cancelled": False, "warnings": warnings}

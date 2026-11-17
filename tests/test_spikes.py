@@ -31,6 +31,11 @@ class TestRobustSigma(unittest.TestCase):
         self.assertAlmostEqual(robust_sigma(x, mask)[0], 1 / 0.6745)
         self.assertTrue(np.isnan(robust_sigma(x, np.ones_like(mask))[0]))
 
+    def test_flat_channel_has_no_sigma(self):
+        x = np.zeros((2, 1000))
+        x[1, ::7] = 1.0  # mostly zeros: median |x| is 0 too
+        self.assertTrue(np.isnan(robust_sigma(x)).all())  # a 0 threshold would flag every sample
+
 
 class TestCrossings(unittest.TestCase):
 

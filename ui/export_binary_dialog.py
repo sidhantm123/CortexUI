@@ -1,4 +1,6 @@
 """Dialog for configuring binary (.i16 / .bin) export options."""
+import html
+
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
     QDialog,
@@ -18,6 +20,7 @@ from PySide6.QtWidgets import (
 
 from models import StreamState
 from .channel_spec import format_channel_spec, parse_channel_spec
+from . import theme
 
 
 class ExportBinaryDialog(QDialog):
@@ -82,7 +85,7 @@ class ExportBinaryDialog(QDialog):
         self._filter_check.setEnabled(bool(self._filters_desc))
         proc_layout.addWidget(self._filter_check)
         self._stale_note = QLabel(
-            f'<span style="color:#c0392b;">{", ".join(self._stale)} blanking is out of date (events or '
+            f'<span style="color:{theme.ERROR};">{html.escape(", ".join(self._stale))} blanking is out of date (events or '
             "settings changed since Apply). Export will use the last applied blanking — cancel and click "
             "Apply Blanking to update.</span>"
         )
@@ -195,10 +198,10 @@ class ExportBinaryDialog(QDialog):
         numbers, error = parse_channel_spec(text, number_to_ch, reasons, noun)
         self._channels = [number_to_ch[n] for n in numbers]
         if error:
-            self._ch_preview.setText(f'<span style="color:#c0392b;">{error}</span>')
+            self._ch_preview.setText(f'<span style="color:{theme.ERROR};">{html.escape(error)}</span>')
         else:
             names = [st.channel_label(c) for c in self._channels]
-            shown = ", ".join(names[:6]) + (", …" if len(names) > 6 else "")
+            shown = html.escape(", ".join(names[:6])) + (", …" if len(names) > 6 else "")
             word = self._number_word if len(names) != 1 else self._number_word[:-1]
             self._ch_preview.setText(f"<small>{len(names)} {word}: {shown}</small>")
         if self._ok_button is not None:

@@ -110,6 +110,31 @@ class TestBlackrockReader(unittest.TestCase):
     def tearDown(self):
         shutil.rmtree(self.tmp)
 
+    def test_unreadable_files_are_skipped_with_a_note(self):
+        (self.tmp / "rec001.ns2").write_bytes(b"NEURALCD" + b"\x00" * 20)  # truncated header
+        (self.tmp / "rec001.ccf").write_text('<?xml version="1.0" encoding="no-such-codec"?><CCF/>')  # LookupError
+        block = BlackrockReader().load_block(str(self.tmp))
+        self.assertEqual(list(block.streams), ["ns5"])
+        notes = block.metadata["notes"]
+        self.assertEqual(len(notes), 2)
+        self.assertTrue(any("rec001.ns2" in n for n in notes))
+        self.assertTrue(any("rec001.ccf" in n for n in notes))
+
+    def test_folder_with_nothing_readable_fails(self):
+        (self.tmp / "rec001.ns5").write_bytes(b"NEURALCD")
+        with self.assertRaises(ValueError) as cm:
+            BlackrockReader().load_block(str(self.tmp))
+        self.assertIn("rec001.ns5", str(cm.exception))
+
+    def test_reading_to_the_end_keeps_the_last_sample(self):
+        fs = 30000.0
+        n = next(n for n in range(1000, 100000) if int(n / fs * fs) != n)  # n/fs*fs rounds below n
+        write_nsx_23(self.tmp / "rec001.ns5", [(0, self.counts[:1].repeat(n, axis=0))])
+        reader = BlackrockReader()
+        reader.load_block(str(self.tmp))
+        data, _ = reader.get_stream_data("ns5", [0], 0.0, n / fs)
+        self.assertEqual(data.shape[1], n)
+
     def test_detects_folder(self):
         self.assertTrue(BlackrockReader.is_blackrock_folder(str(self.tmp)))
         self.assertIsInstance(open_reader(str(self.tmp)), BlackrockReader)

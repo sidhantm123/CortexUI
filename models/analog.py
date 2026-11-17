@@ -112,7 +112,14 @@ def number_events(events: List[StimEvent]) -> List[StimEvent]:
 
 
 def is_analog_label(label: str, channel_id: Optional[int] = None) -> bool:
-    """Blackrock analog inputs are labeled ainpN and have electrode IDs above 128."""
-    if label and label.strip().lower().startswith("ainp"):
+    """
+    Blackrock analog inputs are labeled ainpN and, on a 128-channel system, have IDs above
+    128. An electrode label (elec…, chan…) is neural whatever its ID: larger systems number
+    electrodes past 128.
+    """
+    name = (label or "").strip().lower()
+    if name.startswith("ainp"):
         return True
+    if name.startswith(("elec", "chan")):
+        return False
     return channel_id is not None and channel_id > 128

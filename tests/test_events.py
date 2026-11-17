@@ -114,6 +114,9 @@ class TestEventsModel(unittest.TestCase):
         self.assertTrue(is_analog_label("custom", 129))
         self.assertFalse(is_analog_label("elec1-63", 1))
         self.assertFalse(is_analog_label("elec1-63", 128))
+        self.assertFalse(is_analog_label("elec2-10", 202))  # 256-channel system: still an electrode
+        self.assertFalse(is_analog_label("chan140", 140))
+        self.assertTrue(is_analog_label("", 140))
 
 
 class TestNeuralChannels(unittest.TestCase):

@@ -11,7 +11,8 @@ def freeze_sigma(reader, stream: str, channels: List[int], i0: int, i1: int, fs:
                  num_channels: int, blank_results=(), filters=None,
                  progress: Optional[Callable[[int], None]] = None,
                  cancelled: Optional[Callable[[], bool]] = None,
-                 chunk_s: float = 5.0, pad_s: float = 1.0) -> Optional[np.ndarray]:
+                 chunk_s: float = 5.0, pad_s: float = 1.0,
+                 warnings: Optional[List[str]] = None) -> Optional[np.ndarray]:
     """
     Sigma per channel = median(|x|)/0.6745 of samples [i0, i1) after blanking and filtering,
     blanked samples excluded (the same numbers the threshold line uses for that view).
@@ -22,7 +23,7 @@ def freeze_sigma(reader, stream: str, channels: List[int], i0: int, i1: int, fs:
     kept: List[List[np.ndarray]] = [[] for _ in channels]
     for k, n_chunks, _a, _b, data, mask in iter_processed_chunks(
         reader, stream, channels, i0, i1, fs, num_channels, blank_results, filters,
-        chunk_s, pad_s, with_mask=True,
+        chunk_s, pad_s, with_mask=True, warnings=warnings,
     ):
         if cancelled is not None and cancelled():
             return None
@@ -36,8 +37,9 @@ def freeze_sigma(reader, stream: str, channels: List[int], i0: int, i1: int, fs:
     for row, parts in enumerate(kept):
         x = np.concatenate(parts) if parts else np.zeros(0, np.float32)
         kept[row] = None  # free each channel's samples once used
-        if x.size:
-            sigma[row] = np.median(x, overwrite_input=True) / MAD_TO_SIGMA
+        median = np.median(x, overwrite_input=True) if x.size else 0.0
+        if median > 0:  # NaN for no samples or a flat channel (see robust_sigma)
+            sigma[row] = median / MAD_TO_SIGMA
     return sigma
 
 
@@ -58,6 +60,7 @@ def detect_spikes(
     cancelled: Optional[Callable[[], bool]] = None,
     chunk_s: float = 5.0,
     pad_s: float = 1.0,
+    warnings: Optional[List[str]] = None,
 ) -> Optional[Dict[int, np.ndarray]]:
     """
     Threshold crossings over [i_start, i_stop), processed in chunks (blanking -> filters).
@@ -71,7 +74,7 @@ def detect_spikes(
 
     for k, n_chunks, a, b, data, mask in iter_processed_chunks(
         reader, stream, channels, i_start, i_stop, fs, num_channels, blank_results, filters,
-        chunk_s, pad_s, left_overlap=1, with_mask=True,
+        chunk_s, pad_s, left_overlap=1, with_mask=True, warnings=warnings,
     ):
         if cancelled is not None and cancelled():
             return None

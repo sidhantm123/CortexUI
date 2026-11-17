@@ -22,7 +22,7 @@ Open a recording folder via **File → Open Recording Folder…**, drag-and-drop
 | System | Files | Notes |
 |---|---|---|
 | TDT | `.tev`, `.tsq`, `.tdx`, `.sev`, … | Read with the `tdt` package |
-| Blackrock | `.ns1`–`.ns6`, `.ccf` | Read with `neo`. Each `.nsX` file is one stream. Channel labels come from the `.ccf`, and **View → Recording Info** (Ctrl+I) shows its channel settings. Analog inputs (`ainp*`, ID > 128) are detected automatically. `.nev` (spikes/events) is not loaded yet. |
+| Blackrock | `.ns1`–`.ns6`, `.ccf` | Read with `neo`. Each `.nsX` file is one stream. Channel labels come from the `.ccf`, and **View → Recording Info** (Ctrl+I) shows its channel settings. Analog inputs (`ainp*`, or ID > 128 without an `elec`/`chan` label) are detected automatically. A damaged `.nsX` or `.ccf` is skipped with a note. `.nev` (spikes/events) is not loaded yet. |
 
 ## Setup
 
@@ -69,7 +69,7 @@ pyinstaller --clean tdt_viewer.spec
    - **Detect Spikes (whole recording)** freezes each electrode's σ from the current view (pick a representative view of at least ~5 s), then runs through the whole recording with the current blanking and filters (a spike = the first sample past the threshold; crossings on blanked samples are ignored; refractory period applied). About 4 minutes for a 16-minute, 128-channel recording.
    - Results appear in the **Raster** tab (one row per electrode, a tick per spike, stimulus events shaded). The raster opens on the whole recording and zooms freely; while it shows no more than the Max length it stays in step with Time Series. Click a row to open that electrode in Time Series at the clicked time; hover for its spike count and rate. Results are saved with the session and marked out of date if blanking, filters or threshold settings change.
 9. **Analysis tab**: pick FFT or PSD, choose an interval (type it in or drag on the plot), then click **Analyze**. It runs in the background (with Cancel) on the data as the plot shows it: applied blanking, then the filter chain, CAR/CMR included. An interval holds at most 30 million samples (about 1000 s of one channel, or 125 s of 8, at 30 kHz). Results appear in the Spectrum tab.
-10. **File → Export → Stream as Binary**: pick the range (current view or full recording), then type the channels in the current numbering (e.g. `1-24, 37-45`, `1,2,3` or `33`; **All Channels** / **Displayed** fill the box; a preview lists what you selected and errors show in red). Channels are written in ascending order. Set the scale (default ×1e6, i.e. µV per count), layout and extension. Export writes the data as it currently is: every applied blanking, then the active filter chain. **Processing** lets you pick an earlier stage: untick **Apply blanking** and/or **Apply filter chain** (both for raw). If an applied blanking is out of date (events or settings changed since Apply), the dialog warns you. Full recordings are exported in chunks, so memory stays around 1.5 GB even for 8 GB files. A `.txt` summary next to the file records the range, channels, scale, clipped samples and exactly which blanking and filters were applied. Cancelling an export (or quitting during one, which asks first) deletes the unfinished file.
+10. **File → Export → Stream as Binary**: pick the range (current view or full recording), then type the channels in the current numbering (e.g. `1-24, 37-45`, `1,2,3` or `33`; **All Channels** / **Displayed** fill the box; a preview lists what you selected and errors show in red). Channels are written in ascending order. Set the scale (default ×1e6, i.e. µV per count), layout and extension. Export writes the data as it currently is: every applied blanking, then the active filter chain. **Processing** lets you pick an earlier stage: untick **Apply blanking** and/or **Apply filter chain** (both for raw). If an applied blanking is out of date (events or settings changed since Apply), the dialog warns you. Full recordings are exported in chunks, so memory stays around 1.5 GB even for 8 GB files. A `.txt` summary next to the file records the range, channels, scale, clipped samples and exactly which blanking and filters were applied (including any filter that could not run, e.g. a cutoff above the Nyquist frequency). Cancelling an export (or quitting during one, which asks first) deletes the unfinished file.
 11. **File → Save/Load Session** stores settings as JSON. The recording must still exist at its original path to reload a session.
 
 ## Project structure
@@ -93,6 +93,7 @@ See `CLAUDE.md` for what's in progress.
 
 - **Filter warnings**: cutoff frequencies must be below half the sample rate (the Nyquist frequency).
 - **macOS "app is damaged"** (unsigned build): run `xattr -cr dist/TDT_Viewer.app`.
+- **Unexpected errors** are shown once and written to `error.log` in the app's data folder (macOS: `~/Library/Application Support/TDT Viewer/Multi-Channel Neural Viewer/`). Please include it when reporting a problem.
 
 ## License
 

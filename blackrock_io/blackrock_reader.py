@@ -121,6 +121,9 @@ class BlackrockReader:
         folder holds several recordings. Recordings with pauses are split into one
         stream per segment ("ns5_seg2").
 
+        A .ccf or .nsX file that can't be read is skipped and described in
+        metadata["notes"]; the folder fails only when no .nsX file is readable.
+
         Raises:
             ImportError: If neo package not available
             FileNotFoundError: If folder doesn't exist
@@ -149,9 +152,16 @@ class BlackrockReader:
         multiple_bases = len(nsx_by_base) > 1
         main_base = next(iter(nsx_by_base))
 
+        notes: List[str] = []  # files that could not be used (shown after Open)
+
         # Channel labels from the .ccf override the .nsX header labels
         ccf_path = find_ccf(folder, main_base)
-        ccf = read_ccf(str(ccf_path)) if ccf_path else None
+        ccf = None
+        if ccf_path:
+            try:
+                ccf = read_ccf(str(ccf_path))
+            except Exception as e:
+                notes.append(f"{ccf_path.name} could not be read ({e}); channel labels come from the .nsX headers.")
         ccf_label_map = ccf_labels(ccf) if ccf else {}
 
         streams: Dict[str, StreamInfo] = {}
@@ -169,9 +179,11 @@ class BlackrockReader:
                         load_nev=False,
                         gap_tolerance_ms=GAP_TOLERANCE_MS,
                     )
+                    _only_nsx(rawio, nb)
                     rawio.parse_header()
                 except Exception as e:
-                    raise ValueError(f"Failed to read {file_label}: {e}")
+                    notes.append(f"{file_label} could not be read and was skipped ({e}).")
+                    continue
 
                 if rawio.signal_streams_count() == 0:
                     continue
@@ -220,6 +232,7 @@ class BlackrockReader:
             raise ValueError(
                 "No continuous data found in the .nsX files. "
                 "Ensure the folder contains valid Blackrock recording data."
+                + ("\n\n" + "\n".join(notes) if notes else "")
             )
 
         start_time = min(t_starts)
@@ -237,6 +250,7 @@ class BlackrockReader:
             metadata={
                 "ccf": ccf,
                 "files": [f"{b}.ns{nb}" for b, nbs in nsx_by_base.items() for nb in nbs],
+                "notes": notes,
             },
         )
 
@@ -281,8 +295,8 @@ class BlackrockReader:
         if end_time is None:
             end_time = stream.num_samples / fs
 
-        i_start = min(max(0, int(start_time * fs)), stream.num_samples)
-        i_stop = min(max(i_start, int(end_time * fs)), stream.num_samples)
+        i_start = min(max(0, _sample_index(start_time, fs)), stream.num_samples)
+        i_stop = min(max(i_start, _sample_index(end_time, fs)), stream.num_samples)
 
         if channels is None:
             valid_channels = list(range(n_channels))
@@ -326,6 +340,26 @@ class BlackrockReader:
         self._streams.clear()
         self._block_path = None
         self._block_info = None
+
+
+def _only_nsx(rawio, nb: int):
+    """
+    Make neo parse only the .nsX file being opened. Its parse_header() reads the headers and
+    data packets of every .nsX of the recording whatever nsx_to_load says, so one damaged file
+    made all of them unreadable (and each was parsed once per stream). Uses neo 0.14 internals
+    (set in __init__), left alone if they are missing.
+    """
+    if isinstance(getattr(rawio, "_avail_nsx", None), list) and isinstance(getattr(rawio, "_avail_files", None), dict):
+        rawio._avail_nsx = [nb]
+        for ext in rawio._avail_files:
+            if ext.startswith("ns") and ext != f"ns{nb}":
+                rawio._avail_files[ext] = False
+
+
+def _sample_index(t: float, fs: float) -> int:
+    """First sample at or after time t: floor(t * fs), allowing for rounding in t (n / fs * fs
+    can come out just below n). Callers that pass (i + 0.5) / fs get exactly i."""
+    return int(np.floor(t * fs + 1e-6))
 
 
 def _int_or_none(value) -> Optional[int]:

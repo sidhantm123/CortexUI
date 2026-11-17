@@ -11,7 +11,7 @@ delete details that the code or git history already records.
 | | |
 |---|---|
 | Active branch | `NSP_Basic` (not pushed; branched from `main` @ `beb2da4`) |
-| Last commit | `7658f42` Drop events and blanking that no longer belong to an analog line |
+| Last commit | `97d2973` Run Analyze in the background on blanked, filtered data, CAR included |
 | Tests | 153 passing: `tdtgui/bin/python -m unittest discover tests` |
 | Next step | Audit steps 4–11 run back to back (user request, 2026-11-17); then the user tests them together |
 
@@ -103,10 +103,18 @@ delete details that the code or git history already records.
     marked stale otherwise; `assignments_changed(bool)` re-processes when blanking went. Analog-list edits also
     take new analog channels out of CAR/CMR groups and refresh the Blanking tab. Excluded trials follow their
     events through renumbering (`_renumber`); "nan"/"inf" in an event cell is rejected (`round(nan)` raised).
-21. Audit step 8 (Analyze): `SpectralWorker` reads through `iter_processed_chunks` (blanking, filters, CAR/CMR
+21. (`97d2973`) Audit step 8 (Analyze): `SpectralWorker` reads through `iter_processed_chunks` (blanking, filters, CAR/CMR
     with all channels: CAR used to be skipped silently) and runs via `_run_job("analysis")` with Cancel.
     Intervals are validated and capped at `MAX_ANALYSIS_SAMPLES` (3e7: 8 ch → 125 s). The pipeline collects
     filter warnings (`warnings=` list). RP01 8 ch × 60 s BP+CAR PSD: 5.6 s, GUI stalls ≤ 37 ms.
+22. Audit step 9 (small fixes): `elec…`/`chan…` labels are neural whatever their ID; probe Table Editor works
+    (Add Row passed `clicked(bool)`; OK follows the tab); event lines preallocated (RP01 3 lines 0.70 → 0.58
+    GB); window shown before `splash.finish` (−1.0 s at startup); `main.install_error_log` (error.log in
+    AppDataLocation + one message per error); Blackrock `_sample_index` (`int(n/fs*fs)` < n for 1–7 % of n);
+    FFT amplitude divides by the window sum (Hann read ×0.5); σ = 0 → NaN; export summary / spike detection /
+    analysis report filter warnings; an unreadable `.ccf`/`.nsX` is skipped with `metadata["notes"]` (neo
+    parsed every `.nsX` of a recording, so one damaged file blocked all: `_only_nsx`); names escaped in rich
+    text; the filter dialog validates CAR/CMR on OK; `FilterWorker`/`DecimationWorker` deleted.
 
 ### Branches
 - **`main`:** the TDT/Blackrock viewer with filters, FFT/PSD, probe map, export and `.ccf` info.
@@ -373,14 +381,8 @@ tests/                unittest; test_blackrock.py has write_nsx_23() to build sy
 ## 4. Roadmap
 
 ### Audit fixes (plan approved 2026-11-17; one commit per step, the user tests each)
-Findings came from a full audit (execution-verified on RP01 unless noted). Steps 1–8 are done (§1 items 13, 14,
-16–21). Remaining:
-9. **Small fixes**: `is_analog_label` makes every ID > 128 analog even with an electrode label; probe Table Editor
-   broken (`clicked(checked)` into `append_row`, OK disabled); event detection holds 2× each line (preallocate
-   float32); `splash.finish` before `show()` costs 1.0 s; no `sys.excepthook` with `console=False`; Blackrock drops the
-   last sample when reading to the end; FFT amplitude ×0.5 (Hann gain); σ = 0 threshold; filter warnings dropped in
-   the chunk pipeline (export summary lists skipped filters); `.ccf` `LookupError`/truncated `.nsX` abort the folder;
-   unescaped HTML in labels; CAR dialog OK can raise; dead `FilterWorker`/`DecimationWorker`/`SpectralWorker` use.
+Findings came from a full audit (execution-verified on RP01 unless noted). Steps 1–9 are done (§1 items 13, 14,
+16–22). Remaining:
 10. **TDT** (needs a TDT block): `load_block(headers_only=False)` reads the whole block into RAM and keeps it; every
     read re-parses the TSQ; `(i+0.5)/fs` maps through tdt's `ceil` → one-sample shift in chunked jobs.
 11. **Probe indices** (after checking a lab file): probeinterface `device_channel_indices` are 0-based (−1 = unwired);

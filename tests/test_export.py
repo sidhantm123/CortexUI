@@ -50,6 +50,14 @@ class TestExport(unittest.TestCase):
         arr = raw.reshape(-1, n_ch).T if layout == "interlaced" else raw.reshape(n_ch, -1)
         return arr, res
 
+    def test_filter_warnings_are_reported_once(self):
+        lp = FilterConfig(FilterType.LOWPASS, cutoff_high=FS)  # above Nyquist: can't be designed
+        _, res = self._export("warn.bin", filters=[lp], chunk_s=0.3)
+        self.assertEqual(len(res["warnings"]), 1)
+        self.assertIn("could not be designed", res["warnings"][0])
+        _, res = self._export("ok.bin")
+        self.assertEqual(res["warnings"], [])
+
     def test_raw_matches_reader_exactly(self):
         arr, res = self._export("raw.bin")
         data, _ = self.reader.get_stream_data("ns5")

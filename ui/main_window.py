@@ -36,7 +36,6 @@ from core.view_buffer import window_target, process_buffer
 from core.workers import (
     WorkerManager,
     BufferLoadWorker,
-    FilterWorker,
     SpectralWorker,
     EventDetectWorker,
     BlankingWorker,
@@ -658,6 +657,9 @@ class MainWindow(QMainWindow):
 
             self._reset_analog_view()
             self._time_plot.set_empty(False)
+            notes = (block.metadata or {}).get("notes")
+            if notes:
+                QMessageBox.information(self, "Some Files Skipped", "\n\n".join(notes))
 
         except Exception as e:
             QMessageBox.critical(
@@ -1715,6 +1717,7 @@ class MainWindow(QMainWindow):
             self._update_spike_view()
             self._plot_tabs.setCurrentIndex(self._raster_tab_index)
             self._toast.show_message(f"Detected {result.total():,} spikes")
+            self._show_job_warnings(result.warnings)
 
         self._run_job("spike detection", worker, "Detecting spikes across the recording...", done,
                       "Failed to detect spikes")
@@ -2217,6 +2220,8 @@ class MainWindow(QMainWindow):
                 f"\n\n{result['n_clipped']:,} samples were clipped at the int16 limits; "
                 "consider a smaller scale factor." if result["n_clipped"] else ""
             )
+            if result["warnings"]:
+                clipped += "\n\nFilter warnings (see the summary):\n" + "\n".join(result["warnings"])
             self._toast.show_message(f"Exported: {filepath}")
             QMessageBox.information(
                 self,
@@ -2266,6 +2271,10 @@ class MainWindow(QMainWindow):
             filter_lines = ["Filters       : applied, in order"] + [
                 f"  {i}. {f.get_display_name()}" for i, f in enumerate(active_filters, 1)
             ]
+            if result.get("warnings"):
+                filter_lines += ["Filter warnings (the chain did not run exactly as listed):"] + [
+                    f"  {w}" for w in result["warnings"]
+                ]
         else:
             filter_lines = ["Filters       : not applied"]
 

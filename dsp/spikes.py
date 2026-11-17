@@ -16,7 +16,8 @@ def robust_sigma(x: np.ndarray, exclude: Optional[np.ndarray] = None) -> np.ndar
     """
     Per-row noise sigma = median(|x|) / 0.6745, leaving out excluded (e.g. blanked) samples.
 
-    Returns an array with one value per row; NaN for rows with no usable samples.
+    Returns an array with one value per row; NaN for rows with no usable samples or no
+    noise (a flat channel: a zero threshold would make every sample a spike).
     """
     x = np.atleast_2d(x)
     out = np.full(x.shape[0], np.nan)
@@ -25,6 +26,7 @@ def robust_sigma(x: np.ndarray, exclude: Optional[np.ndarray] = None) -> np.ndar
             row = row[~np.atleast_2d(exclude)[i]]
         if row.size:
             out[i] = np.median(np.abs(row)) / MAD_TO_SIGMA
+    out[out == 0] = np.nan
     return out
 
 

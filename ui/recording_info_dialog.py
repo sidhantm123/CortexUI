@@ -1,4 +1,6 @@
 """Read-only dialog showing recording metadata and Blackrock .ccf settings."""
+import html
+
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
     QDialog,
@@ -37,14 +39,14 @@ class RecordingInfoDialog(QDialog):
 
         block = self._block
         lines = [
-            f"<b>{block.name}</b>",
+            f"<b>{html.escape(block.name)}</b>",
             f"Format: {'Blackrock' if block.source == 'blackrock' else 'TDT'}",
-            f"Path: {block.path}",
+            f"Path: {html.escape(str(block.path))}",
             f"Duration: {block.duration:.3f} s",
         ]
         for name, info in sorted(block.streams.items()):
             lines.append(
-                f"Stream {name}: {info.num_channels} ch @ {info.sample_rate:g} Hz, "
+                f"Stream {html.escape(name)}: {info.num_channels} ch @ {info.sample_rate:g} Hz, "
                 f"{info.num_samples} samples"
             )
         summary = QLabel("<br>".join(lines))

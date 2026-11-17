@@ -5,8 +5,7 @@ import numpy as np
 
 from PySide6.QtCore import QObject, QRunnable, Signal, Slot, QThreadPool
 
-from models import FilterConfig
-from dsp import apply_filter_chain, compute_fft, compute_psd, decimate_for_display
+from dsp import compute_fft, compute_psd
 
 
 class WorkerSignals(QObject):
@@ -142,102 +141,6 @@ class BufferLoadWorker(CancellableWorker):
             self.old = self.process = None
 
 
-class FilterWorker(CancellableWorker):
-    """
-    Worker for applying filter chains.
-
-    Emits result as dict with:
-        - 'data': filtered np.ndarray
-        - 'time': np.ndarray (unchanged)
-        - 'warnings': list of warning strings
-        - 'vrms': dict mapping channel index to Vrms value
-    """
-
-    def __init__(
-        self,
-        data: np.ndarray,
-        time_axis: np.ndarray,
-        filters: List[FilterConfig],
-        fs: float,
-        global_bypass: bool = False,
-        all_channel_data: Optional[np.ndarray] = None,
-        channel_indices: Optional[List[int]] = None,
-        max_plot_points: int = 8000,
-    ):
-        super().__init__()
-        self.data = data
-        self.time_axis = time_axis
-        self.filters = filters
-        self.fs = fs
-        self.global_bypass = global_bypass
-        self.all_channel_data = all_channel_data
-        self.channel_indices = channel_indices
-        self.max_plot_points = max_plot_points
-
-    @Slot()
-    def run(self):
-        """Execute the filtering and decimation."""
-        self.signals.started.emit()
-
-        try:
-            if self.is_cancelled():
-                self.signals.cancelled.emit()
-                return
-
-            self.signals.progress.emit(10)
-
-            filtered_data, warnings, vrms = apply_filter_chain(
-                self.data,
-                self.filters,
-                self.fs,
-                self.global_bypass,
-                all_channel_data=self.all_channel_data,
-                channel_indices=self.channel_indices,
-            )
-
-            if self.is_cancelled():
-                self.signals.cancelled.emit()
-                return
-
-            self.signals.progress.emit(60)
-
-            # Decimate for display
-            if filtered_data.ndim == 1:
-                n_samples = len(filtered_data)
-            else:
-                n_samples = filtered_data.shape[1]
-
-            if n_samples > self.max_plot_points:
-                plot_data, plot_time = decimate_for_display(
-                    filtered_data, self.time_axis,
-                    target_points=self.max_plot_points,
-                )
-            else:
-                plot_data = filtered_data
-                plot_time = self.time_axis
-
-            if self.is_cancelled():
-                self.signals.cancelled.emit()
-                return
-
-            self.signals.progress.emit(100)
-
-            result = {
-                "data": filtered_data,
-                "plot_data": plot_data,
-                "plot_time": plot_time,
-                "time": self.time_axis,
-                "warnings": warnings,
-                "vrms": vrms,
-            }
-
-            self.signals.result.emit(result)
-            self.signals.finished.emit()
-
-        except Exception as e:
-            self.signals.error.emit(str(e))
-
-
 class SpectralWorker(CancellableWorker):
     """
     FFT or Welch PSD of samples [i_start, i_stop) of some channels, after blanking and the
@@ -316,54 +219,6 @@ class SpectralWorker(CancellableWorker):
             self.signals.error.emit(str(e))
 
 
-class DecimationWorker(CancellableWorker):
-    """
-    Worker for decimating data for display.
-
-    Emits result as dict with:
-        - 'data': decimated np.ndarray
-        - 'time': decimated time axis
-    """
-
-    def __init__(
-        self,
-        data: np.ndarray,
-        time_axis: np.ndarray,
-        target_points: int = 4000,
-    ):
-        super().__init__()
-        self.data = data
-        self.time_axis = time_axis
-        self.target_points = target_points
-
-    @Slot()
-    def run(self):
-        """Execute the decimation."""
-        self.signals.started.emit()
-
-        try:
-            if self.is_cancelled():
-                self.signals.cancelled.emit()
-                return
-
-            decimated_data, decimated_time = decimate_for_display(
-                self.data,
-                self.time_axis,
-                target_points=self.target_points,
-            )
-
-            result = {
-                "data": decimated_data,
-                "time": decimated_time,
-            }
-
-            self.signals.result.emit(result)
-            self.signals.finished.emit()
-
-        except Exception as e:
-            self.signals.error.emit(str(e))
-
-
 class EventDetectWorker(CancellableWorker):
     """
     Detect stimulation events on assigned analog channels.
@@ -410,7 +265,10 @@ class EventDetectWorker(CancellableWorker):
             for stream, items in by_stream.items():
                 fs, duration = self.stream_info[stream]
                 channels = [a.channel for a in items]
-                chunks = []
+                # The lines are filled in place (a chunk list plus its concatenation held each
+                # line twice); readers may return a sample less than asked at the very end
+                lines = np.empty((len(channels), int(round(duration * fs))), dtype=np.float32)
+                n = 0
                 t = 0.0
                 while t < duration:
                     if self.is_cancelled():
@@ -418,14 +276,16 @@ class EventDetectWorker(CancellableWorker):
                         return
                     t_end = min(duration, t + self.CHUNK_SECONDS)
                     data, _ = self.reader.get_stream_data(
-                        stream, channels=channels, start_time=t, end_time=t_end
+                        stream, channels=channels, start_time=t, end_time=t_end, dtype=np.float32
                     )
-                    chunks.append(np.atleast_2d(data).astype(np.float32))
+                    data = np.atleast_2d(data)[:, : lines.shape[1] - n]
+                    lines[:, n: n + data.shape[1]] = data
+                    n += data.shape[1]
+                    del data
                     done += t_end - t
                     t = t_end
                     self.signals.progress.emit(int(90 * done / total))
-                lines = np.concatenate(chunks, axis=1)
-                del chunks
+                lines = lines[:, :n]
 
                 for row, a in enumerate(items):
                     if self.is_cancelled():
@@ -645,11 +505,12 @@ class SpikeDetectWorker(CancellableWorker):
                 raise ValueError(
                     f"The view σ is frozen from ({t0:.2f}–{t1:.2f} s) holds no data; show a real time range first"
                 )
+            warnings: List[str] = []
             sigma = freeze_sigma(
                 self.reader, self.stream, self.channels, i0, i1, fs, self.num_channels,
                 self.blank_results, self.filters,
                 progress=lambda p: self.signals.progress.emit(int(0.1 * p)),
-                cancelled=self.is_cancelled,
+                cancelled=self.is_cancelled, warnings=warnings,
             )
             if sigma is None or self.is_cancelled():
                 self.signals.cancelled.emit()
@@ -659,7 +520,7 @@ class SpikeDetectWorker(CancellableWorker):
                 self.settings.k * sigma, self.settings.polarity, self.settings.refractory_ms,
                 self.blank_results, self.filters,
                 progress=lambda p: self.signals.progress.emit(10 + int(0.9 * p)),
-                cancelled=self.is_cancelled,
+                cancelled=self.is_cancelled, warnings=warnings,
             )
             if times is None or self.is_cancelled():
                 self.signals.cancelled.emit()
@@ -676,6 +537,7 @@ class SpikeDetectWorker(CancellableWorker):
                 sigma_window=(i0 / fs, i1 / fs),
                 processing=self.processing,
                 duration=self.n_samples / fs,
+                warnings=warnings,
             ))
             self.signals.finished.emit()
         except Exception as e:

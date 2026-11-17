@@ -21,6 +21,7 @@ from PySide6.QtWidgets import (
     QGridLayout,
     QScrollArea,
     QFrame,
+    QMessageBox,
 )
 
 from models import StreamState, FilterConfig, FilterType
@@ -493,6 +494,16 @@ class FilterEditDialog(QDialog):
             FilterType.CMR,
         ):
             self._group_widget.set_channel_groups(config.channel_groups)
+
+    def accept(self):
+        """Close only with a valid filter (e.g. CAR/CMR needs a subgroup of 2+ channels); get_config
+        would raise after the dialog closed otherwise."""
+        try:
+            self.get_config()
+        except ValueError as e:
+            QMessageBox.warning(self, "Invalid Filter", str(e))
+            return
+        super().accept()
 
     def get_config(self) -> FilterConfig:
         """Get the configured filter."""

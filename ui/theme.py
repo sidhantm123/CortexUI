@@ -258,6 +258,7 @@ class ElidedLabel(QLabel):
     def __init__(self, text: str = "", parent=None, min_width: int = 1):
         super().__init__(parent)
         self._full = ""
+        self.setTextFormat(Qt.TextFormat.PlainText)  # names and paths, never markup
         self.setMinimumWidth(min_width)  # don't let long text widen the panel
         self.set_full_text(text)
 

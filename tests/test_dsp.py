@@ -266,6 +266,16 @@ class TestSpectral(unittest.TestCase):
         self.assertEqual(magnitude.shape[0], 2)
         self.assertEqual(len(freqs), magnitude.shape[1])
 
+    def test_fft_reads_sine_amplitude(self):
+        fs = 1000.0
+        for n in (4000, 4001):  # even and odd lengths
+            t = np.arange(n) / fs
+            x = 0.5 + 3.0 * np.sin(2 * np.pi * 50.0 * t) + 1.0 * np.sin(2 * np.pi * 120.0 * t)
+            freqs, mag = compute_fft(x, fs)
+            self.assertAlmostEqual(mag[np.argmin(np.abs(freqs - 50.0))], 3.0, delta=0.02)
+            self.assertAlmostEqual(mag[np.argmin(np.abs(freqs - 120.0))], 1.0, delta=0.02)
+            self.assertAlmostEqual(mag[0], 0.5, delta=0.01)
+
     def test_multichannel_psd(self):
         """Test PSD on multi-channel data."""
         data = np.vstack([self.signal, self.signal * 0.5])

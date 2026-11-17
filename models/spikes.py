@@ -1,5 +1,5 @@
 """Spike detection settings."""
-from dataclasses import dataclass, asdict
+from dataclasses import dataclass, asdict, field
 
 
 @dataclass
@@ -35,6 +35,7 @@ class SpikeResult:
     processing: str = ""  # description of the blanking and filters applied
     duration: float = 0.0  # seconds of recording scanned
     stale: bool = False
+    warnings: list = field(default_factory=list)  # filter chain warnings during detection
 
     def total(self) -> int:
         return int(sum(len(t) for t in self.times.values()))
@@ -60,6 +61,7 @@ class SpikeResult:
             "processing": self.processing,
             "duration": self.duration,
             "stale": self.stale,
+            "warnings": list(self.warnings),
         }
 
     @classmethod
@@ -80,4 +82,5 @@ class SpikeResult:
             processing=data.get("processing", ""),
             duration=data.get("duration", 0.0),
             stale=data.get("stale", False),
+            warnings=list(data.get("warnings", [])),
         )
