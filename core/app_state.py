@@ -327,8 +327,7 @@ class AppState:
                     if c < current.num_channels
                 ]
                 current.set_analog_channels(current.analog_channels)
-                current.view_start = saved.view_start
-                current.view_end = min(saved.view_end, current.duration)
+                current.set_view_range(saved.view_start, saved.view_end)  # clamped to this recording
                 current.filters = saved.filters
                 current.global_bypass = saved.global_bypass
                 current.scatter_mode = saved.scatter_mode

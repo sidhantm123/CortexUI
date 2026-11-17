@@ -54,7 +54,21 @@ class TimeZoomViewBox(pg.ViewBox):
 
     Ctrl/⌘ + wheel zooms amplitude instead, which turns y auto-fit off until a
     double-click turns it back on.
+
+    set_max_span limits how far out the time axis can zoom (the plot buffer must fit in
+    memory); a wheel zoom-out that stops at that limit emits sigMaxSpanHit.
     """
+
+    sigMaxSpanHit = Signal()
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self._max_span: Optional[float] = None
+
+    def set_max_span(self, seconds: Optional[float]):
+        """Longest visible time span, in seconds (None = unlimited)."""
+        self._max_span = seconds
+        self.setLimits(maxXRange=seconds)
 
     def wheelEvent(self, ev, axis=None):
         if ev.modifiers() & _AMPLITUDE_ZOOM_KEYS:
@@ -66,7 +80,12 @@ class TimeZoomViewBox(pg.ViewBox):
             ev.accept()
             self.sigRangeChangedManually.emit([False, True])
         else:
+            x0, x1 = self.viewRange()[0]
             super().wheelEvent(ev, axis=0)
+            if ev.delta() < 0 and self._max_span is not None:  # zooming out
+                y0, y1 = self.viewRange()[0]
+                if y1 - y0 >= self._max_span * (1 - 1e-6) and y1 - y0 <= (x1 - x0) * (1 + 1e-9):
+                    self.sigMaxSpanHit.emit()
 
     def mouseClickEvent(self, ev):
         # pyqtgraph delivers double-clicks here (ev.double()), not to mouseDoubleClickEvent
@@ -224,16 +243,16 @@ class TimeSeriesPlot(QWidget):
         # Scroll/drag act on time; y fits the visible data (Ctrl/⌘+scroll zooms amplitude)
         setup_time_axes(self._plot)
 
-        # Connect signals
-        self._plot.sigRangeChanged.connect(self._on_range_changed)
+        # x changes only: the y auto-fit after every render changes the y range too, and
+        # sigRangeChanged would then trigger a second, identical render
+        self._plot.sigXRangeChanged.connect(self._on_x_range_changed)
 
     def plot_item(self) -> pg.PlotItem:
         """The underlying PlotItem (used to link other plots' x-axes)."""
         return self._plot
 
-    def _on_range_changed(self, view_box, ranges):
-        """Handle view range changes."""
-        x_range = ranges[0]
+    def _on_x_range_changed(self, view_box, x_range):
+        """Handle time-range changes (pan, zoom, programmatic)."""
         self.view_range_changed.emit(x_range[0], x_range[1])
 
     def set_data(

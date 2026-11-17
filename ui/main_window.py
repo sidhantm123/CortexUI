@@ -98,6 +98,11 @@ class MainWindow(QMainWindow):
     # Maximum points to plot without decimation
     MAX_PLOT_POINTS = 8000
 
+    # Largest plot buffer read into memory, in channels × samples (1e8 float64 = 800 MB).
+    # The view length is limited so the buffer never exceeds it: 1 ch at 30 kHz → 3333 s,
+    # 8 overlay channels → 416 s, 136 channels under CAR/CMR → 24 s.
+    MAX_BUFFER_SAMPLES = 1e8
+
     def __init__(self):
         super().__init__()
 
@@ -131,6 +136,9 @@ class MainWindow(QMainWindow):
         self._pending_buffer_start: float = 0.0
         self._pending_buffer_end: float = 0.0
         self._pending_needs_all: bool = False
+        self._inflight = None  # (stream, channels, needs_all, buf_start, buf_end) of the load under way
+        self._setting_range = False  # True while code, not the user, is setting the plot range
+        self._max_span: Optional[float] = None  # current view-length limit (s), see _update_view_limits
 
         # Fast-path tracking
         self._last_plot_channels: list = []
@@ -468,6 +476,9 @@ class MainWindow(QMainWindow):
         start, end = state.get_view_range()
         mid = (start + end) / 2
         width = min(max((end - start) * factor, 10.0 / state.sample_rate), state.duration)
+        if self._max_span is not None and width > self._max_span:
+            width = self._max_span
+            self._on_max_span_hit()
         start = min(max(0.0, mid - width / 2), state.duration - width)
         self._on_view_range_requested(start, start + width)
 
@@ -565,6 +576,8 @@ class MainWindow(QMainWindow):
         self._spike_panel.threshold_settings_changed.connect(self._on_spike_inputs_changed)
         self._raster_plot.plot_item().setXLink(self._time_plot.plot_item())
         self._raster_plot.channel_clicked.connect(self._on_raster_channel_clicked)
+        for plot in (self._time_plot, self._analog_plot, self._raster_plot):
+            plot.plot_item().getViewBox().sigMaxSpanHit.connect(self._on_max_span_hit)
         self._sigma_selected: Optional[float] = None  # σ of the selected channel in view
 
         # Blanking
@@ -635,6 +648,8 @@ class MainWindow(QMainWindow):
             self._buffer_channels = []
             self._buffer_start = -1.0
             self._buffer_end = -1.0
+            self._inflight = None
+            self._load_seq += 1  # a load still running for the previous stream must not land here
 
             # Restore scatter mode from stream state
             self._time_plot.set_scatter_mode(state.scatter_mode)
@@ -648,8 +663,9 @@ class MainWindow(QMainWindow):
             self._update_numbering_actions()
             self._update_spike_view()
 
-            # Load and display data
-            self._refresh_plot()
+            # Show this stream's own view (the plot would otherwise keep the previous
+            # stream's range and draw the new data off-screen), then load it
+            self._on_view_range_requested(*state.get_view_range())
 
             self._update_plot_chips()
 
@@ -670,8 +686,14 @@ class MainWindow(QMainWindow):
 
     @Slot(float, float)
     def _on_view_range_requested(self, start: float, end: float):
-        """Handle view range change request."""
-        self._time_plot.set_view_range(start, end)
+        """Set the view from code (event jump, Apply View, keys, stream switch) and refresh once."""
+        # setXRange emits sigRangeChanged synchronously; _on_plot_view_changed must not
+        # start a second render or load for the same move
+        self._setting_range = True
+        try:
+            self._time_plot.set_view_range(start, end)
+        finally:
+            self._setting_range = False
         self._refresh_plot()
 
     @Slot(object, object)
@@ -683,7 +705,10 @@ class MainWindow(QMainWindow):
 
         state.set_view_range(start, end)
         self._control_panel.update_view_range(start, end)
+        if self._setting_range:
+            return  # the caller refreshes once itself
 
+        start, end = state.get_view_range()  # clamped to the recording (the plot may show past its ends)
         channels = state.get_active_channels()
 
         # Fast path: filtered buffer already covers this view — render immediately,
@@ -727,9 +752,9 @@ class MainWindow(QMainWindow):
         state = self._app_state.get_current_state()
         if state:
             state.scatter_mode = enabled
-        # Force full re-render since plot items change
-        self._last_scatter_mode = not enabled  # Invalidate fast path
-        self._apply_filters()
+        # Plot items change, so force set_data on the next render (no re-filtering needed)
+        self._last_scatter_mode = not enabled
+        self._rerender_current()
 
     @Slot(dict)
     def _on_analyze_requested(self, params: dict):
@@ -813,15 +838,16 @@ class MainWindow(QMainWindow):
         if not state or self._app_state.block is None:
             return
 
+        self._update_view_limits(state)
         start, end = state.get_view_range()
         channels = state.get_active_channels()
+        needs_all = self._chain_needs_all(state)
 
         # ── Buffer fast path ────────────────────────────────────────────────
         # The view moved within the already-loaded + filtered buffer.
         # Just re-slice and re-decimate — no disk I/O, no re-filtering (~5 ms).
         # Filters are re-applied by _on_filters_changed when the chain changes.
         # A CAR/CMR that was just added needs the all-channel buffer, so that is a miss.
-        needs_all = self._chain_needs_all(state)
         if (
             self._filtered_data is not None
             and self._raw_time is not None
@@ -833,20 +859,44 @@ class MainWindow(QMainWindow):
             self._rerender_from_buffer(start, end, state)
             return
 
+        # ── Channel change under CAR/CMR: every channel is already in memory ───
+        if (
+            needs_all
+            and self._raw_data_all is not None
+            and self._raw_time is not None
+            and start >= self._buffer_start
+            and end <= self._buffer_end
+        ):
+            self._raw_data = self._raw_data_all[channels]
+            self._buffer_channels = channels
+            self._apply_filters()
+            return
+
         # ── Buffer miss: async disk load ────────────────────────────────────
-        # Load 1× the view duration as margin on each side so the next few
-        # pan/zoom steps will hit the buffer without touching the disk.
-        view_dur = max(end - start, 1.0)
-        buf_start = max(0.0, start - view_dur)
-        buf_end = min(state.duration, end + view_dur)
-
-        # When CAR/CMR is active we must load all channels for referencing
+        # Load up to 1× the view duration as margin on each side so the next few
+        # pan/zoom steps hit the buffer, shrunk so the buffer stays under MAX_BUFFER_SAMPLES.
         load_channels = list(range(state.num_channels)) if needs_all else channels
+        max_span = self.MAX_BUFFER_SAMPLES / (len(load_channels) * state.sample_rate)
+        margin = max(0.0, min(max(end - start, 1.0), (max_span - (end - start)) / 2))
+        buf_start = max(0.0, start - margin)
+        buf_end = min(state.duration, end + margin)
 
-        # Cancel any in-flight load; bump sequence so stale results are dropped
+        # A load that already covers this view is on its way: let it land instead of
+        # cancelling it after it has done the reading and starting the same read again
+        request = (state.stream_name, tuple(channels), needs_all)
+        if (
+            self._inflight is not None
+            and self._inflight[:3] == request
+            and self._inflight[3] <= start
+            and end <= self._inflight[4]
+        ):
+            return
+
+        # Cancel any other in-flight load; bump sequence so stale results are dropped
         self._worker_manager.cancel_all()
         self._load_seq += 1
         seq = self._load_seq
+        self._inflight = request + (buf_start, buf_end)
 
         # Store context for _on_data_loaded_async
         self._pending_channels = channels
@@ -865,15 +915,54 @@ class MainWindow(QMainWindow):
             lambda result, s=seq: self._on_data_loaded_async(result, s)
         )
         worker.signals.error.connect(
-            lambda err: self._toast.show_message(f"Error loading data: {err}", ERROR)
+            lambda err, s=seq: self._on_data_load_error(err, s)
         )
         self._worker_manager.submit(worker)
+
+    def _update_view_limits(self, state):
+        """Cap the view length so the plot buffer (3× the view at most) fits MAX_BUFFER_SAMPLES."""
+        n_load = state.num_channels if self._chain_needs_all(state) else len(state.get_active_channels())
+        max_span = self.MAX_BUFFER_SAMPLES / (max(1, n_load) * state.sample_rate)
+        if max_span == self._max_span:
+            return
+        self._max_span = max_span
+        start, end = state.get_view_range()
+        self._setting_range = True  # a clamp here must not start a refresh of its own
+        try:
+            for plot in (self._time_plot, self._analog_plot, self._raster_plot):
+                plot.plot_item().getViewBox().set_max_span(max_span)
+            if end - start > max_span:
+                self._time_plot.set_view_range(start, start + max_span)
+                self._toast.show_message(
+                    f"View limited to {max_span:.3g} s while {n_load} channels are loaded (memory)", WARNING
+                )
+        finally:
+            self._setting_range = False
+
+    def _on_max_span_hit(self):
+        """A zoom-out stopped at the view-length limit."""
+        state = self._app_state.get_current_state()
+        if state is None or self._max_span is None:
+            return
+        n = state.num_channels if self._chain_needs_all(state) else len(state.get_active_channels())
+        self._toast.show_message(
+            f"Zoomed out as far as memory allows: {self._max_span:.3g} s with {n} channel"
+            f"{'s' if n != 1 else ''} loaded",
+            WARNING,
+        )
+
+    def _on_data_load_error(self, err: str, seq: int):
+        if seq != self._load_seq:
+            return  # a cancelled or superseded load
+        self._inflight = None
+        self._toast.show_message(f"Error loading data: {err}", ERROR)
 
     @Slot(object)
     def _on_data_loaded_async(self, result: dict, seq: int):
         """Receive async load result; discard stale results from cancelled workers."""
         if seq != self._load_seq:
             return  # A newer request was already issued — ignore this one
+        self._inflight = None
 
         state = self._app_state.get_current_state()
         if state is None:
@@ -898,8 +987,17 @@ class MainWindow(QMainWindow):
         self._buffer_end = self._pending_buffer_end
         self._buffer_channels = channels
 
-        # Apply filters and render
-        self._apply_filters()
+        # Apply filters and render. The old filtered buffer must never be sliced against
+        # the new time axis, so drop it first; if processing fails (e.g. MemoryError), no
+        # buffer is left behind.
+        self._filtered_data = None
+        self._blank_mask = None
+        try:
+            self._apply_filters()
+        except Exception as e:
+            self._raw_data = self._raw_data_all = self._raw_time = None
+            self._buffer_channels = []
+            self._toast.show_message(f"Could not process the loaded data: {e}", ERROR)
 
     def _rerender_from_buffer(self, start: float, end: float, state):
         """
@@ -923,8 +1021,11 @@ class MainWindow(QMainWindow):
         data_view = data[:, i0:i1] if data.ndim > 1 else data[i0:i1]
         time_view = time[i0:i1]
 
-        # Vrms of exactly what is visible, blanked samples excluded
-        channels = state.get_active_channels()
+        # Vrms of exactly what is visible, blanked samples excluded. The buffer's channels:
+        # the selection may already have moved on while its load is still in flight.
+        channels = self._buffer_channels
+        if not channels:
+            return
         mask_view = self._blank_mask[:, i0:i1] if self._blank_mask is not None else None
         vrms = compute_vrms(data_view, channels, mask_view)
         state.vrms_values = vrms
@@ -970,7 +1071,9 @@ class MainWindow(QMainWindow):
         if state is None or self._raw_data is None:
             return
 
-        channels = state.get_active_channels()
+        channels = self._buffer_channels  # the rows of _raw_data (not the current selection)
+        if not channels:
+            return
 
         # The all-channel buffer (~1 GB for a 10 s view of 136 ch) is only kept while a
         # CAR/CMR filter needs it
@@ -1031,7 +1134,10 @@ class MainWindow(QMainWindow):
         self._analog_plot.highlight_event(None)
         self._update_analog_events()
         state = self._app_state.get_current_state()
-        if state is not None:
+        # Only when not linked: pyqtgraph links push range changes back to the master plot,
+        # re-derived from the follower's pixel geometry (that is how a 10 s view came out
+        # as 7.52 s at load, and why linked ranges drifted by a few ms after jumps)
+        if state is not None and not self._analog_panel.is_synced():
             self._analog_plot.set_view_range(*state.get_view_range())
         self._refresh_analog()
 
@@ -1065,10 +1171,9 @@ class MainWindow(QMainWindow):
     @Slot(bool)
     def _on_analog_sync_changed(self, synced: bool):
         if synced:
+            # Linking aligns the analog plot to the main plot by itself; setting its range here
+            # would push a geometry-derived range back onto the main plot
             self._analog_plot.set_x_link(self._time_plot.plot_item())
-            state = self._app_state.get_current_state()
-            if state is not None:
-                self._analog_plot.set_view_range(*state.get_view_range())
         else:
             self._analog_plot.set_x_link(None)
 

@@ -226,6 +226,7 @@ class AnalogPanel(QWidget):
         grid.addWidget(QLabel("Channel selection:"), 0, 0)
         self._channel_spin = QSpinBox()
         self._channel_spin.setMinimum(1)
+        self._channel_spin.setKeyboardTracking(False)  # one load per typed number, not per keystroke
         self._channel_spin.valueChanged.connect(self._on_channel_changed)
         grid.addWidget(self._channel_spin, 0, 1)
         self._assign_btn = QPushButton("Assign Channel")
@@ -243,6 +244,7 @@ class AnalogPanel(QWidget):
         grid.addWidget(QLabel("Event selection:"), 2, 0)
         self._event_spin = QSpinBox()
         self._event_spin.setMinimum(1)
+        self._event_spin.setKeyboardTracking(False)  # one jump per typed number
         self._event_spin.valueChanged.connect(self._on_event_changed)
         grid.addWidget(self._event_spin, 2, 1)
         self._detect_btn = QPushButton("Detect Events")

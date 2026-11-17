@@ -1,7 +1,7 @@
 """Filter chain panel widget with channel grouping support."""
 from typing import Dict, List, Optional
 
-from PySide6.QtCore import Signal, Qt
+from PySide6.QtCore import Signal, Qt, QSignalBlocker
 from PySide6.QtWidgets import (
     QWidget,
     QVBoxLayout,
@@ -603,7 +603,9 @@ class FilterPanel(QWidget):
 
     def set_state(self, state: StreamState):
         self._state = state
-        self._global_bypass_check.setChecked(state.global_bypass)
+        # Showing the state is not a change: no filters_changed (it would mark spikes stale)
+        with QSignalBlocker(self._global_bypass_check):
+            self._global_bypass_check.setChecked(state.global_bypass)
         self._update_list()
 
     def _update_list(self):
@@ -724,4 +726,5 @@ class FilterPanel(QWidget):
     def clear(self):
         self._state = None
         self._filter_list.clear()
-        self._global_bypass_check.setChecked(False)
+        with QSignalBlocker(self._global_bypass_check):
+            self._global_bypass_check.setChecked(False)

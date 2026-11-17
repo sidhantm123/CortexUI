@@ -18,12 +18,17 @@ class Toast(QLabel):
         super().__init__(parent)
         set_role(self, "toast")  # before the first polish, so the padding applies
         self.hide()
+        self._text = ""
         self._timer = QTimer(self)
         self._timer.setSingleShot(True)
         self._timer.timeout.connect(self.hide)
         parent.installEventFilter(self)
 
     def show_message(self, text: str, kind: str = INFO, ms: int = 0):
+        if self.isVisible() and text == self._text:  # repeated message (e.g. per wheel step): just extend it
+            self._timer.start(ms or (4000 if kind == INFO else 8000))
+            return
+        self._text = text
         set_role(self, _ROLES.get(kind, "toast"))
         self.setToolTip(text + "\n(click to dismiss)")
         max_w = max(100, self.parentWidget().width() - 48)

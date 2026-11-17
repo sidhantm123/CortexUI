@@ -44,7 +44,7 @@ class AnalogPlot(QWidget):
         theme.axis_label(self._plot, "left", "Analog (mV)")
         self._plot.getAxis("left").setWidth(LEFT_AXIS_WIDTH)
         setup_time_axes(self._plot)
-        self._plot.sigRangeChanged.connect(self._on_range_changed)
+        self._plot.sigXRangeChanged.connect(self._on_x_range_changed)  # not y: the auto-fit would re-render
 
         self._curve = self._plot.plot(pen=pg.mkPen(theme.ANALOG_TRACE, width=1))
         self._title = pg.TextItem("", color=theme.TEXT_SECONDARY, anchor=(0, 0))
@@ -102,9 +102,9 @@ class AnalogPlot(QWidget):
     def get_view_range(self):
         return tuple(self._plot.viewRange()[0])
 
-    def _on_range_changed(self, view_box, ranges):
+    def _on_x_range_changed(self, view_box, x_range):
         self._update_markers()
-        self.view_range_changed.emit(ranges[0][0], ranges[0][1])
+        self.view_range_changed.emit(x_range[0], x_range[1])
 
     def refresh_events(self):
         """Redraw markers and the highlight after event times changed."""

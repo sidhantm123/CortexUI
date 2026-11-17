@@ -110,6 +110,7 @@ class ControlPanel(QWidget):
         self._channel_spin = NumberSpinBox()
         self._channel_spin.setMinimum(1)
         self._channel_spin.setMaximum(1)
+        self._channel_spin.setKeyboardTracking(False)  # "125" is one change, not 1, 12, 125 (each a disk read)
         self._channel_spin.valueChanged.connect(self._on_single_channel_changed)
         single_layout.addWidget(self._channel_spin)
         self._channel_name = QLabel("")
@@ -341,8 +342,8 @@ class ControlPanel(QWidget):
             end = start + 0.1
 
         if self._state:
-            self._state.view_start = start
-            self._state.view_end = end
+            self._state.set_view_range(start, end)  # clamps to the recording
+            start, end = self._state.get_view_range()
 
         self.view_range_requested.emit(start, end)
 
@@ -363,8 +364,7 @@ class ControlPanel(QWidget):
         self._end_spin.blockSignals(False)
 
         if self._state:
-            self._state.view_start = start
-            self._state.view_end = end
+            self._state.set_view_range(start, end)  # clamped: a view past the ends must still hit the buffer
 
     def _on_scatter_mode_changed(self, state: int):
         """Handle scatter mode checkbox toggle."""

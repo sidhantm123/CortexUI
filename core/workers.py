@@ -609,6 +609,10 @@ class SpikeDetectWorker(CancellableWorker):
             t0, t1 = self.sigma_window
             i0 = max(0, int(round(t0 * fs)))
             i1 = min(self.n_samples, max(i0 + 1, int(round(t1 * fs))))
+            if i1 - i0 < 2:
+                raise ValueError(
+                    f"The view σ is frozen from ({t0:.2f}–{t1:.2f} s) holds no data; show a real time range first"
+                )
             sigma = freeze_sigma(
                 self.reader, self.stream, self.channels, i0, i1, fs, self.num_channels,
                 self.blank_results, self.filters,
