@@ -11,7 +11,7 @@ A desktop app (Windows / macOS) for viewing and analyzing multi-channel neural r
 - Analog input viewer (below the main plot) with stimulation event detection: assign analog lines to modalities (ICMS, PNS, Tactor or your own), detect events, browse them in a table and correct onset/offset times
 - Stimulation artifact blanking per modality, with fixed or adaptive (per-channel recovery) padding, applied before filtering
 - FFT and Welch PSD on a selected time interval
-- Probe geometry map (probeinterface JSON)
+- Probe geometry map (probeinterface JSON; `device_channel_indices` are 0-based device channels, −1 = not connected)
 - Export a stream to int16 binary (`.i16` / `.bin`) at any processing stage (raw, blanked, blanked + filtered), for the current view or the whole recording
 - Session save/load (filters, view ranges, channel selections, analog assignments, events)
 

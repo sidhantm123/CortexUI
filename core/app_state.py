@@ -321,6 +321,7 @@ class AppState:
             "block_path": self.block.path,
             "current_stream": self.current_stream,
             "probe": self.probe.to_probeinterface_dict() if self.probe else None,
+            "probe_index_base": 0,  # device_channel_indices as probeinterface: 0-based (older sessions: 1)
             "stream_states": {
                 name: state.to_dict()
                 for name, state in self.stream_states.items()
@@ -400,7 +401,9 @@ class AppState:
         probe = None
         if session.get("probe"):
             try:
-                probe = ProbeGeometry.from_probeinterface_dict(session["probe"])
+                probe = ProbeGeometry.from_probeinterface_dict(
+                    session["probe"], one_based=session.get("probe_index_base", 1) == 1
+                )
             except Exception as e:
                 messages.append(f"The saved probe geometry could not be read ({e}); it was not restored.")
 

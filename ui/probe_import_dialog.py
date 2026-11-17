@@ -19,7 +19,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from models.probe import ProbeContact, ProbeGeometry
+from models.probe import UNWIRED, ProbeContact, ProbeGeometry
 from .theme import set_role, set_primary
 
 
@@ -28,13 +28,16 @@ from .theme import set_role, set_primary
 _COLUMNS = ["Ch (1-based)", "X (µm)", "Y (µm)", "Shank ID", "Radius (µm)"]
 
 
+UNWIRED_TEXT = "–"  # Ch column of a contact that is not connected
+
+
 def _geometry_to_rows(geo: ProbeGeometry) -> list:
-    """Convert ProbeGeometry to a list of row value tuples."""
+    """Convert ProbeGeometry to a list of row value tuples (unwired contacts last)."""
     rows = []
-    for c in sorted(geo.contacts, key=lambda c: c.channel_idx):
+    for c in sorted(geo.contacts, key=lambda c: (c.channel_idx < 0, c.channel_idx)):
         rows.append(
             (
-                str(c.channel_idx + 1),  # 1-indexed display
+                str(c.channel_idx + 1) if c.channel_idx >= 0 else UNWIRED_TEXT,  # 1-based display
                 f"{c.x_um:.4f}",
                 f"{c.y_um:.4f}",
                 c.shank_id,
@@ -52,16 +55,19 @@ def _rows_to_geometry(rows: list) -> ProbeGeometry:
         label = f"Row {row_idx + 1}"
         ch_str, x_str, y_str, shank_str, r_str = row
 
-        try:
-            ch_1based = int(ch_str)
-        except ValueError:
-            raise ValueError(f"{label}: Channel must be an integer, got '{ch_str}'")
-        if ch_1based < 1:
-            raise ValueError(f"{label}: Channel must be ≥ 1, got {ch_1based}")
-        ch_idx = ch_1based - 1
-        if ch_idx in seen_channels:
-            raise ValueError(f"{label}: Duplicate channel index {ch_1based}")
-        seen_channels.add(ch_idx)
+        if ch_str.strip() in (UNWIRED_TEXT, "-", ""):
+            ch_idx, ch_1based = UNWIRED, None  # contact not connected
+        else:
+            try:
+                ch_1based = int(ch_str)
+            except ValueError:
+                raise ValueError(f"{label}: Channel must be an integer or '{UNWIRED_TEXT}', got '{ch_str}'")
+            if ch_1based < 1:
+                raise ValueError(f"{label}: Channel must be ≥ 1, got {ch_1based}")
+            ch_idx = ch_1based - 1
+            if ch_idx in seen_channels:
+                raise ValueError(f"{label}: Duplicate channel index {ch_1based}")
+            seen_channels.add(ch_idx)
 
         try:
             x = float(x_str)
@@ -81,7 +87,7 @@ def _rows_to_geometry(rows: list) -> ProbeGeometry:
         contacts.append(
             ProbeContact(
                 channel_idx=ch_idx,
-                contact_id=str(ch_1based),
+                contact_id=str(ch_1based if ch_1based is not None else f"u{row_idx + 1}"),
                 x_um=x,
                 y_um=y,
                 shank_id=shank,
@@ -266,7 +272,7 @@ class ProbeImportDialog(QDialog):
         layout.addWidget(self._edit_table)
 
         # Hint
-        hint = QLabel("Ch is 1-indexed (Ch 1 = TDT channel 0 internally).")
+        hint = QLabel(f"Ch is the recording channel, 1 = the first channel in the file; {UNWIRED_TEXT} = not connected.")
         set_role(hint, "secondary")
         layout.addWidget(hint)
 

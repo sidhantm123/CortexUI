@@ -161,7 +161,7 @@ class ProbeMapWidget(QWidget):
                 }
             )
 
-            if c.channel_idx == self._selected_ch:
+            if c.channel_idx >= 0 and c.channel_idx == self._selected_ch:
                 # White ring, slightly larger than the contact
                 sel_spots.append(
                     {
@@ -206,8 +206,9 @@ class ProbeMapWidget(QWidget):
             vrms_str = (
                 f" | Vrms: {vrms * 1e6:.1f} µV" if vrms is not None else ""
             )
+            channel = f"Ch {nearest.channel_idx + 1}" if nearest.channel_idx >= 0 else "Not connected"
             tip = (
-                f"Ch {nearest.channel_idx + 1}  |  Shank {nearest.shank_id}  |  "
+                f"{channel}  |  Shank {nearest.shank_id}  |  "
                 f"r={nearest.radius_um:.1f} µm  |  A={nearest.area_um2:.0f} µm²"
                 f"{vrms_str}"
             )

@@ -52,6 +52,16 @@ class TestRenderItems(unittest.TestCase):
         w.update_vrms({0: float("nan")})
         w.close()
 
+    def test_unwired_contact_is_never_selected(self):
+        probe = ProbeGeometry([ProbeContact(0, "1", 0.0, 0.0, "0", 10.0), ProbeContact(-1, "2", 100.0, 0.0, "0", 10.0)])
+        w = ProbeMapWidget()
+        w.show()
+        w.set_probe(probe)  # nothing selected yet: -1, which an unwired contact used to match
+        self.assertEqual(len(w._sel_scatter.data), 0)
+        w.set_selected_channel(0)
+        self.assertEqual(len(w._sel_scatter.data), 1)
+        w.close()
+
     def test_blank_spans_reuse_their_items(self):
         plot = TimeSeriesPlot()
         plot.set_blank_spans([(1.0, 2.0), (3.0, 4.0)])

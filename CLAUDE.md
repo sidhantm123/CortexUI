@@ -11,9 +11,9 @@ delete details that the code or git history already records.
 | | |
 |---|---|
 | Active branch | `NSP_Basic` (not pushed; branched from `main` @ `beb2da4`) |
-| Last commit | `7cb3027` Fix a batch of small audit findings |
-| Tests | 167 passing: `tdtgui/bin/python -m unittest discover tests` |
-| Next step | Audit steps 4–11 run back to back (user request, 2026-11-17); then the user tests them together |
+| Last commit | `4ef4e41` Read TDT streams from the .tev directly at exact sample indices |
+| Tests | 174 passing: `tdtgui/bin/python -m unittest discover tests` |
+| Next step | User tests audit steps 4–11 together (run back to back on request, 2026-11-17/18) |
 
 ### Done
 1. Analog input viewer and event detection (`78664d0`).
@@ -115,7 +115,7 @@ delete details that the code or git history already records.
     analysis report filter warnings; an unreadable `.ccf`/`.nsX` is skipped with `metadata["notes"]` (neo
     parsed every `.nsX` of a recording, so one damaged file blocked all: `_only_nsx`); names escaped in rich
     text; the filter dialog validates CAR/CMR on OK; `FilterWorker`/`DecimationWorker` deleted.
-23. Audit step 10 (TDT): **TDT viewing was broken** with numpy 2 (pinned 2.4.1): tdt 0.7.3's windowed stream
+23. (`4ef4e41`) Audit step 10 (TDT): **TDT viewing was broken** with numpy 2 (pinned 2.4.1): tdt 0.7.3's windowed stream
     reads compute `np.arange(np.uint16(nchan), 0, -1)` and uint64 differences that wrap, so every window of a
     multi-channel store not starting at 0 s came back empty. `TDTReader` now parses the `.tsq` once
     (`headers=1`) and reads `.tev` records itself (`_TevStream`: per-channel byte offsets, `npts` samples per
@@ -123,6 +123,10 @@ delete details that the code or git history already records.
     and re-parse the `.tsq` on every read). Stores in `.sev` files still go through tdt (reused headers,
     t1 a quarter sample early for its `ceil`, trimmed): **untested, no `.sev` data**. Tested on synthetic
     blocks (`tests/test_tdt.py` writes `.tsq`/`.tev` that tdt itself reads back exactly).
+24. Audit step 11 (probe indices): probeinterface `device_channel_indices` are read 0-based (they were taken as
+    1-based, shifting every contact by one channel); −1 = not connected (`models.probe.UNWIRED`: drawn grey, left
+    out of shank groups and selection, "–" in the Table Editor). Sessions write `probe_index_base: 0`; older ones
+    (no key, saved as channel + 1) still load. **Not checked against a lab probe file.**
 
 ### Branches
 - **`main`:** the TDT/Blackrock viewer with filters, FFT/PSD, probe map, export and `.ccf` info.
@@ -388,11 +392,8 @@ tests/                unittest; test_blackrock.py has write_nsx_23() to build sy
 
 ## 4. Roadmap
 
-### Audit fixes (plan approved 2026-11-17; one commit per step, the user tests each)
-Findings came from a full audit (execution-verified on RP01 unless noted). Steps 1–10 are done (§1 items 13, 14,
-16–23). Remaining:
-11. **Probe indices** (after checking a lab file): probeinterface `device_channel_indices` are 0-based (−1 = unwired);
-    the importer treats them as 1-based.
+### Audit fixes (approved 2026-11-17): all 11 steps done (§1 items 13, 14, 16–24)
+Untested for lack of data: TDT `.sev` stores, a real TDT block, a lab probeinterface file.
 
 ### Step 4: Spike Detection tab (DONE: 4a + 4b; design notes below kept for reference)
 - **Threshold:**
