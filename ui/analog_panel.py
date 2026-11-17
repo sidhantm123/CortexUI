@@ -198,7 +198,7 @@ class AnalogPanel(QWidget):
 
     channel_selected = Signal()  # selected analog channel changed
     analog_list_changed = Signal(str)  # stream whose analog channel list was edited
-    assignments_changed = Signal()
+    assignments_changed = Signal(bool)  # True if a blanking result was removed with the events
     detect_requested = Signal()
     event_selected = Signal(object)  # StimEvent
     events_edited = Signal(object)  # StimEvent whose onset/offset changed
@@ -480,9 +480,9 @@ class AnalogPanel(QWidget):
         assignment = (
             AnalogAssignment(key[0], key[1], modality, dialog.settings()) if modality else None
         )
-        self._app_state.set_assignment(key[0], key[1], assignment)
+        blanking_removed = self._app_state.set_assignment(key[0], key[1], assignment)
         self.refresh()
-        self.assignments_changed.emit()
+        self.assignments_changed.emit(blanking_removed)
 
     def _on_edit_list(self):
         state = self._app_state.get_current_state()

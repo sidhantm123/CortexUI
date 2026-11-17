@@ -11,8 +11,8 @@ delete details that the code or git history already records.
 | | |
 |---|---|
 | Active branch | `NSP_Basic` (not pushed; branched from `main` @ `beb2da4`) |
-| Last commit | `7899b48` Keep rendering fully blanked views; stop rebuilding plot items every frame |
-| Tests | 145 passing: `tdtgui/bin/python -m unittest discover tests` |
+| Last commit | `3e49243` Leave the current recording untouched when an Open or session load fails |
+| Tests | 152 passing: `tdtgui/bin/python -m unittest discover tests` |
 | Next step | Audit steps 4–11 run back to back (user request, 2026-11-17); then the user tests them together |
 
 ### Done
@@ -93,11 +93,16 @@ delete details that the code or git history already records.
     markers and raster bands rebuild only when the events in view change; the probe map doesn't rebuild while
     hidden. Min/max decimation now draws the last samples of a view. Rerender 13 → 8 ms (18 → 8 ms with the
     probe tab shown); what remains of a pan step is pyqtgraph painting the axes.
-19. Audit step 6 (failed Open / session): `AppState.load_block` opens the new recording before closing the old
+19. (`3e49243`) Audit step 6 (failed Open / session): `AppState.load_block` opens the new recording before closing the old
     one, so a failed Open changes nothing (it used to empty the state under the old panels); the probe is kept
     across recordings, as the UI already showed. `load_session` parses the whole file before opening the
     recording; unknown or invalid saved filters are skipped with a `load_messages` note (one used to abort the
     session). `save_session` writes a `.tmp` file and renames it.
+20. Audit step 7 (events / assignments): unassigning a line or moving it to another modality drops its events
+    (`AppState._drop_events`); a modality's blanking result goes with its last event (its tab disappears) and is
+    marked stale otherwise; `assignments_changed(bool)` re-processes when blanking went. Analog-list edits also
+    take new analog channels out of CAR/CMR groups and refresh the Blanking tab. Excluded trials follow their
+    events through renumbering (`_renumber`); "nan"/"inf" in an event cell is rejected (`round(nan)` raised).
 
 ### Branches
 - **`main`:** the TDT/Blackrock viewer with filters, FFT/PSD, probe map, export and `.ccf` info.
@@ -167,7 +172,8 @@ tests/                unittest; test_blackrock.py has write_nsx_23() to build sy
     `AppState`.
   - Events are numbered **per modality** in onset order (`number_events`).
   - `detected_onset` / `detected_offset` keep the original times after a user edit.
-  - Edits go through `AppState.set_event_times`, which validates, snaps to samples and renumbers.
+  - Edits go through `AppState.set_event_times`, which validates, snaps to samples and renumbers (`_renumber`
+    keeps excluded blanking trials on their events). Removing events goes through `_drop_events`.
 - **Detection (`dsp/events.py`):**
   - Auto threshold = the midpoint of the median (idle) level and the 50th most extreme sample (active level).
   - Rising edges closer than the merge gap (onset-to-onset) join into one event.
@@ -363,11 +369,8 @@ tests/                unittest; test_blackrock.py has write_nsx_23() to build sy
 ## 4. Roadmap
 
 ### Audit fixes (plan approved 2026-11-17; one commit per step, the user tests each)
-Findings came from a full audit (execution-verified on RP01 unless noted). Steps 1–6 are done (§1 items 13, 14,
-16–19). Remaining:
-7. **Event / assignment consistency** (`app_state.py`, `analog_panel.py`): re-assigning or unassigning an analog
-   channel keeps its old-modality events; analog-list edits leave those channels inside CAR groups and the Blanking
-   tab un-refreshed; "nan" in an event cell raises; excluded blanking trials keyed by (renumbered) event number.
+Findings came from a full audit (execution-verified on RP01 unless noted). Steps 1–7 are done (§1 items 13, 14,
+16–20). Remaining:
 8. **Analyze** (`main_window.py`, `spectrum_panel.py`, `workers.py`): synchronous on the GUI thread, CAR/CMR silently
    skipped (no all-channel data; warnings dropped), no interval limit (whole recording × 8 ch = 1.85 GB), Cancel inert
    → validate, cap, run through `iter_processed_chunks` in `SpectralWorker`.

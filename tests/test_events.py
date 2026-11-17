@@ -13,6 +13,8 @@ from dsp.events import auto_threshold, detect_line_events, find_trains
 from models import StreamState, DetectionSettings, AnalogAssignment, StimEvent
 from models.analog import number_events, is_analog_label
 from core.app_state import AppState
+from models.blanking import BlankingSettings, BlankResult
+from models.filter_config import FilterConfig, FilterType
 
 FS = 30000.0
 
@@ -219,6 +221,21 @@ class TestEventEditing(unittest.TestCase):
         self.assertEqual((e.onset, e.offset), (10.0, 11.0))
         self.assertEqual(self.app.edited_event_count(), 0)
 
+    def test_nan_and_inf_rejected(self):
+        e = self.app.events[0]
+        for bad in (float("nan"), float("inf")):
+            self.assertEqual(self.app.set_event_times(e, bad, e.offset), "Enter a time in seconds")
+        self.assertEqual((e.onset, e.offset), (10.0, 11.0))
+
+    def test_excluded_trials_follow_their_events(self):
+        self.app.blanking_settings["ICMS"] = BlankingSettings(excluded_trials=[1])
+        first = self.app.events[0]
+        self.app.set_event_times(first, 25.0, 26.0)  # now trial 2
+        self.assertEqual(first.number, 2)
+        self.assertEqual(self.app.blanking_settings["ICMS"].excluded_trials, [2])
+        self.app.reset_event_times(first)
+        self.assertEqual(self.app.blanking_settings["ICMS"].excluded_trials, [1])
+
     def test_old_session_event_without_detected_times(self):
         e = StimEvent.from_dict(
             {"modality": "PNS", "number": 1, "onset": 1.0, "offset": 2.0,
@@ -234,6 +251,55 @@ class TestEventEditing(unittest.TestCase):
         self.assertEqual(restored.onset, 9.5)
         self.assertEqual(restored.detected_onset, 10.0)
         self.assertTrue(restored.onset_edited)
+
+
+class TestAssignmentConsistency(unittest.TestCase):
+    """Events, blanking and CAR groups follow assignment and analog-list changes."""
+
+    def setUp(self):
+        self.app = AppState()
+        self.state = StreamState("ns5", 6, FS, 100.0, analog_channels=[4, 5])
+        self.app.stream_states["ns5"] = self.state
+        self.app.set_assignment("ns5", 4, AnalogAssignment("ns5", 4, "ICMS"))
+        self.app.set_assignment("ns5", 5, AnalogAssignment("ns5", 5, "PNS"))
+        self.app.events = number_events([
+            StimEvent("ICMS", 0, 10.0, 11.0, "ns5", 4, "ainp1"),
+            StimEvent("ICMS", 0, 20.0, 21.0, "ns5", 4, "ainp1"),
+            StimEvent("PNS", 0, 30.0, 31.0, "ns5", 5, "ainp2"),
+        ])
+        for m in ("ICMS", "PNS"):
+            self.app.blanking_results[m] = BlankResult(m, "ns5", [0, 1, 2, 3], [1], np.zeros((1, 4)), np.ones((1, 4)))
+
+    def test_unassigning_drops_its_events_and_blanking(self):
+        self.assertTrue(self.app.set_assignment("ns5", 4, None))
+        self.assertEqual([e.modality for e in self.app.events], ["PNS"])
+        self.assertNotIn("ICMS", self.app.blanking_results)
+        self.assertIn("PNS", self.app.blanking_results)
+
+    def test_changing_modality_drops_the_old_events(self):
+        self.assertTrue(self.app.set_assignment("ns5", 4, AnalogAssignment("ns5", 4, "Tactor")))
+        self.assertFalse(any(e.modality == "ICMS" for e in self.app.events))
+
+    def test_same_modality_keeps_events(self):
+        new = AnalogAssignment("ns5", 4, "ICMS", DetectionSettings(merge_gap_ms=50.0))
+        self.assertFalse(self.app.set_assignment("ns5", 4, new))
+        self.assertEqual(len(self.app.events), 3)
+        self.assertFalse(self.app.blanking_results["ICMS"].stale)
+
+    def test_a_modality_keeping_some_events_goes_stale(self):
+        self.app.set_assignment("ns5", 5, None)  # the PNS line
+        self.app.set_assignment("ns5", 5, AnalogAssignment("ns5", 5, "ICMS"))
+        self.app.events.append(StimEvent("ICMS", 3, 40.0, 41.0, "ns5", 5, "ainp2"))
+        self.assertFalse(self.app.set_assignment("ns5", 5, None))
+        self.assertEqual(len(self.app.events), 2)
+        self.assertTrue(self.app.blanking_results["ICMS"].stale)
+
+    def test_analog_list_edit_cleans_events_and_car_groups(self):
+        self.state.filters = [FilterConfig(FilterType.CAR, channel_groups=[[0, 1, 2], [3, 4]])]
+        removed = self.app.set_analog_channels("ns5", [3, 5])  # 4 is an electrode now, 3 analog
+        self.assertTrue(removed)  # ICMS lost its line and its events
+        self.assertEqual([e.modality for e in self.app.events], ["PNS"])
+        self.assertEqual(self.state.filters[0].channel_groups, [[0, 1, 2], [4]])
 
 
 if __name__ == "__main__":

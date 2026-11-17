@@ -584,7 +584,7 @@ class MainWindow(QMainWindow):
         self._analog_panel.sync_changed.connect(self._on_analog_sync_changed)
         self._analog_panel.channel_selected.connect(self._on_analog_channel_selected)
         self._analog_panel.analog_list_changed.connect(self._on_analog_list_changed)
-        self._analog_panel.assignments_changed.connect(self._update_analog_events)
+        self._analog_panel.assignments_changed.connect(self._on_assignments_changed)
         self._analog_panel.detect_requested.connect(self._on_detect_events)
         self._analog_panel.event_selected.connect(self._on_event_selected)
         self._analog_panel.events_edited.connect(self._on_event_edited)
@@ -1391,6 +1391,17 @@ class MainWindow(QMainWindow):
         self._analog_plot.highlight_event(None)
         self._refresh_analog()
 
+    @Slot(bool)
+    def _on_assignments_changed(self, blanking_removed: bool):
+        """An analog channel was (re)assigned: its old events may be gone, and blanking with them."""
+        self._update_analog_events()
+        self._blanking_panel.refresh()
+        if blanking_removed:
+            self._blanking_changed()  # re-processes the plot without it
+        else:
+            self._blanking_panel.update_status()
+            self._update_plot_chips()
+
     @Slot(str)
     def _on_analog_list_changed(self, stream_name: str):
         """Analog channels of a stream were edited: refresh the electrode lists too."""
@@ -1398,11 +1409,13 @@ class MainWindow(QMainWindow):
         if state is not None and stream_name == self._app_state.current_stream:
             self._control_panel.set_state(state)
             self._spectrum_panel.set_state(state)
+            self._filter_panel.set_state(state)  # CAR/CMR groups lost the new analog channels
             self._last_plot_channels = []
             self._buffer_channels = []
             self._refresh_plot()
         self._app_state.mark_blanking_stale()  # electrode set changed
         self._on_spike_inputs_changed()
+        self._blanking_panel.refresh()  # modalities whose events went with their channel
         self._blanking_panel.update_status()
         self._update_plot_chips()
         self._update_analog_events()

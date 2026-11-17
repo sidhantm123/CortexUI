@@ -1,5 +1,6 @@
 """Application state management."""
 import json
+import math
 import os
 from pathlib import Path
 from typing import Dict, Optional, List, Callable, Tuple
@@ -176,14 +177,59 @@ class AppState:
             for ch in state.analog_channels
         ]
 
-    def set_assignment(self, stream: str, channel: int, assignment: Optional[AnalogAssignment]):
-        """Assign (or with None, unassign) an analog channel."""
+    def set_assignment(self, stream: str, channel: int, assignment: Optional[AnalogAssignment]) -> bool:
+        """
+        Assign (or with None, unassign) an analog channel. Its events are dropped when it is
+        unassigned or moves to another modality: they were detected for the old one.
+
+        Returns True if a blanking result was removed with them (the data must be re-processed).
+        """
+        old = self.analog_assignments.get((stream, channel))
         if assignment is None:
             self.analog_assignments.pop((stream, channel), None)
         else:
             self.analog_assignments[(stream, channel)] = assignment
             if assignment.modality not in self.modality_names():
                 self.custom_modalities.append(assignment.modality)
+        if old is not None and (assignment is None or assignment.modality != old.modality):
+            return self._drop_events(lambda e: (e.stream, e.channel) == (stream, channel))
+        return False
+
+    def _renumber(self):
+        """Renumber events (per modality, by onset); excluded blanking trials follow their events."""
+        excluded = {
+            id(e) for e in self.events
+            if e.modality in self.blanking_settings
+            and e.number in self.blanking_settings[e.modality].excluded_trials
+        }
+        self.events = number_events(self.events)  # renumbers the same objects
+        for modality, settings in self.blanking_settings.items():
+            settings.excluded_trials = sorted(
+                e.number for e in self.events if e.modality == modality and id(e) in excluded
+            )
+
+    def _drop_events(self, drop: Callable[[StimEvent], bool]) -> bool:
+        """
+        Remove the events where drop(event) is True. A modality's blanking result goes with
+        its last event (its Blanking tab disappears, so it could no longer be removed) and is
+        marked stale otherwise. Returns True if a blanking result was removed.
+        """
+        gone = {e.modality for e in self.events if drop(e)}
+        if not gone:
+            return False
+        self.events = [e for e in self.events if not drop(e)]
+        self._renumber()
+        removed = False
+        for modality in gone:
+            res = self.blanking_results.get(modality)
+            if res is None:
+                continue
+            if any(e.modality == modality for e in self.events):
+                res.stale = True
+            else:
+                del self.blanking_results[modality]
+                removed = True
+        return removed
 
     def set_event_times(self, event: StimEvent, onset: float, offset: float) -> Optional[str]:
         """
@@ -191,6 +237,8 @@ class AppState:
 
         Returns an error message, or None when the change was applied.
         """
+        if not (math.isfinite(onset) and math.isfinite(offset)):
+            return "Enter a time in seconds"
         state = self.stream_states.get(event.stream)
         fs = state.sample_rate if state else None
         if fs:
@@ -205,14 +253,14 @@ class AppState:
             return "Onset must be before offset"
 
         event.onset, event.offset = onset, offset
-        self.events = number_events(self.events)
+        self._renumber()
         self.mark_blanking_stale(event.modality)
         return None
 
     def reset_event_times(self, event: StimEvent):
         """Restore an event's detected onset/offset."""
         event.onset, event.offset = event.detected_onset, event.detected_offset
-        self.events = number_events(self.events)
+        self._renumber()
         self.mark_blanking_stale(event.modality)
 
     def get_blanking_settings(self, modality: str) -> BlankingSettings:
@@ -239,17 +287,24 @@ class AppState:
     def edited_event_count(self) -> int:
         return sum(1 for e in self.events if e.edited)
 
-    def set_analog_channels(self, stream: str, channels: List[int]):
-        """Change which channels of a stream are analog; drops assignments that no longer apply."""
+    def set_analog_channels(self, stream: str, channels: List[int]) -> bool:
+        """
+        Change which channels of a stream are analog. Drops assignments (and their events)
+        that no longer apply, and takes channels that became analog out of CAR/CMR groups.
+
+        Returns True if a blanking result was removed (see _drop_events).
+        """
         state = self.stream_states[stream]
         state.set_analog_channels(channels)
         for key in [k for k in self.analog_assignments if k[0] == stream]:
             if key[1] not in state.analog_channels:
                 del self.analog_assignments[key]
-        self.events = [
-            e for e in self.events
-            if (e.stream, e.channel) in self.analog_assignments
-        ]
+        analog = set(state.analog_channels)
+        for f in state.filters:
+            if f.channel_groups:
+                groups = [[c for c in g if c not in analog] for g in f.channel_groups]
+                f.channel_groups = [g for g in groups if g]
+        return self._drop_events(lambda e: (e.stream, e.channel) not in self.analog_assignments)
 
     def save_session(self, filepath: str):
         """
