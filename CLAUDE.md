@@ -11,7 +11,7 @@ delete details that the code or git history already records.
 | | |
 |---|---|
 | Active branch | `NSP_Basic` (not pushed; branched from `main` @ `beb2da4`) |
-| Last commit | `e5bb0f2` Cap the view length, load data ahead of pans, trackpad gestures |
+| Last commit | `8b1d43b` Ignore results of cancelled or superseded long jobs, stop them on open and quit |
 | Tests | 133 passing: `tdtgui/bin/python -m unittest discover tests` |
 | Next step | User tests audit step 3 (Cancel / open another recording / quit during long jobs); then step 4, σ freeze (§4) |
 
@@ -74,7 +74,7 @@ delete details that the code or git history already records.
       the main window's freshly cached pages; fixed a worker leak (~190 MB per pan).
     - Trackpad: horizontal swipe pans, vertical swipe and pinch zoom. Raster unlinked: zooms freely, syncs within
       the cap, row click opens the electrode at that time. CAR filters only the displayed rows (exact; 136× less).
-16. Audit step 3 (long-job lifecycle: Detect Events, Advanced blanking, Detect Spikes, Export):
+16. (`8b1d43b`) Audit step 3 (long-job lifecycle: Detect Events, Advanced blanking, Detect Spikes, Export):
     - **Bug:** Cancel during event detection still replaced the events (and cleared blanking); a job cancelled before
       opening another recording could install its result there. Workers now check Cancel before every result, and
       `MainWindow._run_job` applies a result only if the job wasn't cancelled and the recording is the same.
