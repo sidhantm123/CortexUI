@@ -11,7 +11,7 @@ delete details that the code or git history already records.
 | | |
 |---|---|
 | Active branch | `NSP_Basic` (not pushed; branched from `main` @ `beb2da4`) |
-| Last commit | `395374d` Record audit steps 10 and 11 in CLAUDE.md |
+| Last commit | `ece5a7a` Select CAR/CMR electrodes by dragging; add an Exclude option |
 | Tests | 182 passing: `tdtgui/bin/python -m unittest discover tests` |
 | Next step | User tests audit steps 4–11 and the CAR/CMR drag selection |
 
@@ -127,7 +127,7 @@ delete details that the code or git history already records.
     1-based, shifting every contact by one channel); −1 = not connected (`models.probe.UNWIRED`: drawn grey, left
     out of shank groups and selection, "–" in the Table Editor). Sessions write `probe_index_base: 0`; older ones
     (no key, saved as channel + 1) still load. **Not checked against a lab probe file.**
-25. CAR/CMR group dialog (user request): press and drag selects every electrode between the press and the cursor
+25. (`ece5a7a`) CAR/CMR group dialog (user request): press and drag selects every electrode between the press and the cursor
     in reading order (`_ChannelGrid`: buttons are mouse-transparent, the nearest button centre wins, auto-scroll
     past the visible rows); drags add up; the selected subgroup takes electrodes over; an **Exclude** brush leaves
     electrodes in no group (`EXCLUDED`). A click still toggles. Editing a saved filter shows electrodes in no
