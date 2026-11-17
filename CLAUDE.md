@@ -11,7 +11,7 @@ delete details that the code or git history already records.
 | | |
 |---|---|
 | Active branch | `NSP_Basic` (not pushed; branched from `main` @ `beb2da4`) |
-| Last commit | `4ef4e41` Read TDT streams from the .tev directly at exact sample indices |
+| Last commit | `4dbb788` Read probeinterface channel indices as 0-based, with -1 for unconnected contacts |
 | Tests | 174 passing: `tdtgui/bin/python -m unittest discover tests` |
 | Next step | User tests audit steps 4–11 together (run back to back on request, 2026-11-17/18) |
 
@@ -123,7 +123,7 @@ delete details that the code or git history already records.
     and re-parse the `.tsq` on every read). Stores in `.sev` files still go through tdt (reused headers,
     t1 a quarter sample early for its `ceil`, trimmed): **untested, no `.sev` data**. Tested on synthetic
     blocks (`tests/test_tdt.py` writes `.tsq`/`.tev` that tdt itself reads back exactly).
-24. Audit step 11 (probe indices): probeinterface `device_channel_indices` are read 0-based (they were taken as
+24. (`4dbb788`) Audit step 11 (probe indices): probeinterface `device_channel_indices` are read 0-based (they were taken as
     1-based, shifting every contact by one channel); −1 = not connected (`models.probe.UNWIRED`: drawn grey, left
     out of shank groups and selection, "–" in the Table Editor). Sessions write `probe_index_base: 0`; older ones
     (no key, saved as channel + 1) still load. **Not checked against a lab probe file.**
