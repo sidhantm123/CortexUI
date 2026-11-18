@@ -42,6 +42,28 @@ def parse_electrode_numbers(labels: Optional[List[str]], channels: List[int]) ->
     return numbers, ""
 
 
+def array_name(label: Optional[str]) -> str:
+    """
+    The array (electrode bank) a label belongs to: the label without its trailing number and
+    separators, e.g. 'elec1-10' -> 'elec1', 'chan7' -> 'chan'. '' without a trailing number.
+    """
+    m = _TRAILING_INT.search(label or "")
+    return label[: m.start()].rstrip(" -_.:") if m else ""
+
+
+def group_by_array(channels: List[int], labels: Dict[int, str]) -> List[Tuple[str, List[int]]]:
+    """
+    (array name, channels) per array, from the labels (nothing hardcoded), in the order the
+    channels are given. Arrays of fewer than 2 channels, and unnamed ones, are left out.
+    """
+    groups: Dict[str, List[int]] = {}
+    for ch in channels:
+        name = array_name(labels.get(ch))
+        if name:
+            groups.setdefault(name, []).append(ch)
+    return [(name, chs) for name, chs in groups.items() if len(chs) >= 2]
+
+
 @dataclass
 class StreamState:
     """State for a single stream, persisted when switching streams."""

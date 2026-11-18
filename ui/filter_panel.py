@@ -1,7 +1,7 @@
 """Filter chain panel widget with channel grouping support."""
-from typing import Dict, List, Optional
+from typing import Callable, Dict, List, Optional
 
-from PySide6.QtCore import QPoint, QSignalBlocker, QTimer, Qt, Signal
+from PySide6.QtCore import QEvent, QPoint, QSignalBlocker, QTimer, Qt, Signal
 from PySide6.QtGui import QCursor
 from PySide6.QtWidgets import (
     QWidget,
@@ -23,10 +23,12 @@ from PySide6.QtWidgets import (
     QScrollArea,
     QFrame,
     QMessageBox,
+    QToolTip,
 )
 
 from models import StreamState, FilterConfig, FilterType
 from models.probe import ProbeGeometry
+from models.stream_state import group_by_array
 from . import theme
 from .theme import set_role, set_primary
 
@@ -69,6 +71,7 @@ class _ChannelGrid(QWidget):
     def __init__(self, parent=None):
         super().__init__(parent)
         self.buttons: List[QPushButton] = []
+        self.describe: Optional[Callable[[int], str]] = None  # grid position -> tooltip text
         self._scroll: Optional[QScrollArea] = None
         self._held = False
         # Dragging past the top or bottom of the visible rows keeps scrolling while the mouse is
@@ -90,6 +93,17 @@ class _ChannelGrid(QWidget):
         """Grid position of the button whose centre is nearest to point (grid coordinates)."""
         return min(range(len(self.buttons)),
                    key=lambda i: (self.buttons[i].geometry().center() - point).manhattanLength())
+
+    def event(self, event):
+        # The buttons ignore the mouse, so the grid answers tooltips for them
+        if event.type() == QEvent.Type.ToolTip and self.buttons and self.describe is not None:
+            text = self.describe(self.position_at(event.pos()))
+            if text:
+                QToolTip.showText(event.globalPos(), text, self)
+            else:
+                QToolTip.hideText()
+            return True
+        return super().event(event)
 
     def mousePressEvent(self, event):
         if event.button() == Qt.MouseButton.LeftButton and self.buttons:
@@ -150,10 +164,16 @@ class ChannelGroupWidget(QWidget):
 
     assignment_changed = Signal()
 
-    def __init__(self, channels: List[int], numbers: Optional[Dict[int, int]] = None, parent=None):
+    def __init__(self, channels: List[int], numbers: Optional[Dict[int, int]] = None, parent=None,
+                 note: str = "", describe: Optional[Callable[[int], str]] = None):
+        """
+        note: shown above the grid (what the numbers are); describe: channel -> hover text.
+        """
         super().__init__(parent)
         self._channels = list(channels)  # channel indices offered for grouping, in display order
         self._numbers = numbers or {}  # channel index -> number shown on its button
+        self._note = note
+        self._describe = describe
         self._num_channels = len(self._channels)
 
         # State
@@ -187,7 +207,7 @@ class ChannelGroupWidget(QWidget):
 
         self._add_sg_btn = QPushButton("+ Add Subgroup")
         self._add_sg_btn.setFixedHeight(30)
-        self._add_sg_btn.clicked.connect(self._on_add_subgroup)
+        self._add_sg_btn.clicked.connect(lambda: self._on_add_subgroup())
         self._sg_layout.addWidget(self._add_sg_btn)
 
         self._exclude_btn = QPushButton("Exclude")
@@ -204,6 +224,11 @@ class ChannelGroupWidget(QWidget):
         sg_scroll.setWidget(self._sg_container)
         layout.addWidget(sg_scroll)
 
+        if self._note:
+            note = QLabel(self._note)
+            set_role(note, "secondary")
+            layout.addWidget(note)
+
         # Channel grid in a scroll area
         ch_scroll = QScrollArea()
         ch_scroll.setWidgetResizable(True)
@@ -216,6 +241,8 @@ class ChannelGroupWidget(QWidget):
         self._ch_grid.setSpacing(3)
         self._ch_grid.setContentsMargins(2, 2, 2, 2)
         self._grid.set_scroll_area(ch_scroll)
+        if self._describe is not None:
+            self._grid.describe = lambda pos: self._describe(self._channels[pos])
         self._grid.pressed.connect(self._on_grid_pressed)
         self._grid.dragged.connect(self._on_grid_dragged)
         self._grid.released.connect(self._on_grid_released)
@@ -284,10 +311,10 @@ class ChannelGroupWidget(QWidget):
             f"border: {border}; border-radius: 4px; padding: 0px 10px; }}"
         )
 
-    def _on_add_subgroup(self):
-        """Add a new subgroup."""
+    def _on_add_subgroup(self, label: Optional[str] = None):
+        """Add a new subgroup (named SG n unless a label is given, e.g. an array name)."""
         idx = len(self._subgroups)
-        label = f"SG {idx + 1}"
+        label = label or f"SG {idx + 1}"
         self._subgroups.append(label)
 
         btn = QPushButton(label)
@@ -404,17 +431,29 @@ class ChannelGroupWidget(QWidget):
 
         self._update_status()
 
-    def set_channel_groups(self, groups: List[List[int]]):
-        """Load saved channel groups (for editing existing filter)."""
+    def set_channel_groups(self, groups: List[List[int]], names: Optional[List[str]] = None):
+        """Load channel groups (a saved filter, or an auto-grouping); names label new subgroups."""
         # Create subgroups
         for i, group in enumerate(groups):
             if i >= len(self._subgroups):
-                self._on_add_subgroup()
+                self._on_add_subgroup(names[i] if names and i < len(names) else None)
 
             for ch in group:
                 if ch in self._assignments:
                     self._assign(ch, i)
 
+        self._update_status()
+        self.assignment_changed.emit()
+
+    def excluded(self) -> List[int]:
+        """Channels marked Exclude."""
+        return [ch for ch, value in self._assignments.items() if value == EXCLUDED]
+
+    def exclude(self, channels: List[int]):
+        """Mark these channels Exclude (whatever group they were in)."""
+        for ch in channels:
+            if ch in self._assignments:
+                self._assign(ch, EXCLUDED)
         self._update_status()
         self.assignment_changed.emit()
 
@@ -438,7 +477,14 @@ class FilterEditDialog(QDialog):
         channels: Optional[List[int]] = None,
         probe: Optional[ProbeGeometry] = None,
         numbers: Optional[Dict[int, int]] = None,
+        labels: Optional[Dict[int, str]] = None,
+        numbering: str = "",
     ):
+        """
+        numbers: channel -> number on its button; labels: channel -> recording label (arrays
+        for Auto-group by Array, hover text); numbering: "electrode" or "channel" (what the
+        numbers are).
+        """
         super().__init__(parent)
         self.setWindowTitle("Edit Filter" if filter_config else "Add Filter")
         self.setMinimumWidth(300)
@@ -446,6 +492,8 @@ class FilterEditDialog(QDialog):
         self._sample_rate = sample_rate
         self._channels = list(channels) if channels is not None else [0]
         self._numbers = numbers
+        self._labels = labels or {}
+        self._numbering = numbering
         self._config = filter_config
         self._probe = probe
 
@@ -513,20 +561,41 @@ class FilterEditDialog(QDialog):
         layout.addLayout(form)
 
         # Channel group widget (for CAR/CMR)
-        self._group_widget = ChannelGroupWidget(self._channels, self._numbers, self)
+        note = {
+            "electrode": "Numbers are electrode numbers (View → Number Channels By).",
+            "channel": "Numbers are channel numbers, in recording order (View → Number Channels By).",
+        }.get(self._numbering, "")
+        self._group_widget = ChannelGroupWidget(self._channels, self._numbers, self, note=note,
+                                                describe=self._describe_channel)
         self._group_widget.assignment_changed.connect(self._on_assignment_changed)
         self._group_widget.setVisible(False)
         layout.addWidget(self._group_widget)
 
-        # Auto-group button (shown only when CAR/CMR is selected)
+        # Auto-group buttons (shown only when CAR/CMR is selected)
+        self._auto_group_row = QWidget()
+        auto_row = QHBoxLayout(self._auto_group_row)
+        auto_row.setContentsMargins(0, 0, 0, 0)
         self._auto_group_btn = QPushButton("Auto-group by Shank")
         self._auto_group_btn.setToolTip(
             "Assign channels to subgroups based on the loaded probe shank layout"
         )
         self._auto_group_btn.clicked.connect(self._on_auto_group_by_shank)
-        self._auto_group_btn.setVisible(False)
         self._auto_group_btn.setEnabled(self._probe is not None)
-        layout.addWidget(self._auto_group_btn)
+        auto_row.addWidget(self._auto_group_btn)
+        self._arrays = group_by_array(self._channels, self._labels)
+        self._auto_array_btn = QPushButton("Auto-group by Array")
+        self._auto_array_btn.setEnabled(bool(self._arrays))
+        self._auto_array_btn.setToolTip(
+            "One subgroup per array, from the channel labels: "
+            + ", ".join(f"{name} ({len(chs)})" for name, chs in self._arrays)
+            if self._arrays else
+            "No array found: the channel labels don't share a name before their number "
+            "(e.g. elec1-1 … elec1-64)"
+        )
+        self._auto_array_btn.clicked.connect(self._on_auto_group_by_array)
+        auto_row.addWidget(self._auto_array_btn)
+        self._auto_group_row.setVisible(False)
+        layout.addWidget(self._auto_group_row)
 
         # Buttons
         self._button_box = QDialogButtonBox(
@@ -555,7 +624,7 @@ class FilterEditDialog(QDialog):
             widget.setVisible(False)
 
         self._group_widget.setVisible(False)
-        self._auto_group_btn.setVisible(False)
+        self._auto_group_row.setVisible(False)
 
         if filter_type == FilterType.LOWPASS:
             self._order_label.setVisible(True)
@@ -597,7 +666,7 @@ class FilterEditDialog(QDialog):
 
         elif filter_type in (FilterType.CAR, FilterType.CMR):
             self._group_widget.setVisible(True)
-            self._auto_group_btn.setVisible(True)
+            self._auto_group_row.setVisible(True)
             self._auto_group_btn.setEnabled(self._probe is not None)
             self.setMinimumWidth(450)
             # OK only enabled when all channels assigned
@@ -615,12 +684,28 @@ class FilterEditDialog(QDialog):
             [ch for ch in chs if ch in self._channels]
             for chs in shank_groups.values()
         ]
+        names = [f"Shank {sid}" for sid, chs in shank_groups.items() if any(ch in self._channels for ch in chs)]
         groups = [g for g in groups if g]  # drop empty groups
-        if not groups:
-            return
+        if groups:
+            self._apply_auto_groups(groups, names)
+
+    def _on_auto_group_by_array(self):
+        """One subgroup per array (label name before the number), named after it."""
+        if self._arrays:
+            self._apply_auto_groups([chs for _, chs in self._arrays], [name for name, _ in self._arrays])
+
+    def _apply_auto_groups(self, groups: List[List[int]], names: List[str]):
+        """Replace the subgroups; electrodes marked Exclude stay excluded."""
+        excluded = set(self._group_widget.excluded())
         self._group_widget.reset()
-        self._group_widget.set_channel_groups(groups)
+        self._group_widget.set_channel_groups([[c for c in g if c not in excluded] for g in groups], names)
+        self._group_widget.exclude(sorted(excluded))
         self._enable_ok(self._group_widget.all_assigned())
+
+    def _describe_channel(self, ch: int) -> str:
+        """Hover text for an electrode button: its label and recording channel."""
+        label = self._labels.get(ch)
+        return f"{label} · Ch {ch + 1}" if label else f"Ch {ch + 1}"
 
     def _on_assignment_changed(self):
         """Handle channel assignment change in group widget."""
@@ -797,6 +882,15 @@ class FilterPanel(QWidget):
                 item.setForeground(Qt.GlobalColor.gray)
             self._filter_list.addItem(item)
 
+    def _group_dialog_args(self) -> dict:
+        """Labels and numbering for the CAR/CMR electrode grid."""
+        st = self._state
+        labels = st.channel_labels or []
+        return {
+            "labels": {c: labels[c] for c in st.neural_channels() if c < len(labels) and labels[c]},
+            "numbering": "electrode" if st.uses_electrode_numbers else "channel",
+        }
+
     def _on_add_filter(self):
         if not self._state:
             return
@@ -806,6 +900,7 @@ class FilterPanel(QWidget):
             channels=self._state.ordered_neural_channels(),
             numbers={c: self._state.display_number(c) for c in self._state.neural_channels()},
             probe=self._probe,
+            **self._group_dialog_args(),
         )
         if dialog.exec() == QDialog.DialogCode.Accepted:
             config = dialog.get_config()
@@ -835,6 +930,7 @@ class FilterPanel(QWidget):
                 channels=self._state.ordered_neural_channels(),
                 numbers={c: self._state.display_number(c) for c in self._state.neural_channels()},
                 probe=self._probe,
+                **self._group_dialog_args(),
             )
             if dialog.exec() == QDialog.DialogCode.Accepted:
                 new_config = dialog.get_config()

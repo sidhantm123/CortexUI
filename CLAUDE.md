@@ -11,9 +11,9 @@ delete details that the code or git history already records.
 | | |
 |---|---|
 | Active branch | `NSP_Basic` (not pushed; branched from `main` @ `beb2da4`) |
-| Last commit | `573ff1a` Record the CAR/CMR drag selection commit in CLAUDE.md |
-| Tests | 185 passing: `tdtgui/bin/python -m unittest discover tests` |
-| Next step | Backlog items chosen 2026-11-18, one commit each: FFT/PSD range (done), CAR auto-group by array, event shading on Time Series; then the user tests |
+| Last commit | `926c09e` Add a frequency range for the Spectrum plot |
+| Tests | 190 passing: `tdtgui/bin/python -m unittest discover tests` |
+| Next step | Backlog items chosen 2026-11-18, one commit each: FFT/PSD range (done), CAR auto-group by array (done), event shading on Time Series; then the user tests |
 
 ### Done
 1. Analog input viewer and event detection (`78664d0`).
@@ -132,9 +132,13 @@ delete details that the code or git history already records.
     past the visible rows); drags add up; the selected subgroup takes electrodes over; an **Exclude** brush leaves
     electrodes in no group (`EXCLUDED`). A click still toggles. Editing a saved filter shows electrodes in no
     group as excluded.
-26. Analysis → Frequency Range (user request): Min/Max Hz shown in the Spectrum plot. `SpectrumPlot` keeps the
+26. (`926c09e`) Analysis → Frequency Range (user request): Min/Max Hz shown in the Spectrum plot. `SpectrumPlot` keeps the
     whole result and `set_band` crops what is drawn (y auto-fits the band), so changing the range needs no
     re-analysis; saved per stream (`fft_fmin`/`fft_fmax`, None = full).
+27. CAR/CMR **Auto-group by Array** (user request): one subgroup per array, named after it, from the labels
+    (`models.stream_state.array_name`: the label before its trailing number, `elec1-10` → `elec1`; arrays of < 2
+    electrodes are left out). Both auto-group buttons keep Exclude marks. The dialog says whether its numbers are
+    electrode or channel numbers, and hovering an electrode shows its label and channel.
 
 ### Branches
 - **`main`:** the TDT/Blackrock viewer with filters, FFT/PSD, probe map, export and `.ccf` info.
@@ -425,10 +429,6 @@ Untested for lack of data: TDT `.sev` stores, a real TDT block, a lab probeinter
 - **Later step:** waveform snippets (overlaid ~2 ms cut-outs).
 
 ### Later / unscheduled
-- **CAR/CMR grouping by array (user request, 2026-10-27):**
-  - Add "Auto-group by array" to the CAR/CMR subgroup panel, e.g. SG1 = lateral (elec 1–64, `elec1-*`) and SG2 =
-    medial (elec 65–128, `elec2-*`). Derive the arrays from the label bank (`elecA-NN` → A), not hardcoded ranges.
-  - The panel must say whether its numbers are electrode or channel numbers, following View → Number Channels By.
 - **Probe map takes priority (user request, 2026-10-27):** once probe-map import is fully built out, a loaded probe map
   overrides everything else: electrode numbering, array/shank grouping and positions. It wins over label parsing and
   over channel order.

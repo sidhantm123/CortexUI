@@ -181,6 +181,39 @@ class TestChannelGroupDrag(unittest.TestCase):
         self.assertIn("first", self.w._status_label.text())
 
 
+class TestAutoGroupByArray(unittest.TestCase):
+
+    def _dialog(self, labels, numbering="electrode"):
+        config = None
+        d = FilterEditDialog(sample_rate=30000.0, channels=list(range(16)), labels=labels, numbering=numbering)
+        d._type_combo.setCurrentIndex(d._type_combo.findData(FilterType.CMR))
+        return d
+
+    def test_one_named_subgroup_per_array_keeping_exclusions(self):
+        labels = {c: f"elec{1 + c // 8}-{1 + c % 8}" for c in range(16)}
+        d = self._dialog(labels)
+        w = d._group_widget
+        self.assertTrue(d._auto_array_btn.isEnabled())
+        w.exclude([3])  # e.g. the stimulation electrode, excluded first
+        d._auto_array_btn.click()
+        self.assertEqual(w._subgroups, ["elec1", "elec2"])
+        self.assertEqual(w.get_channel_groups(), [[0, 1, 2, 4, 5, 6, 7], list(range(8, 16))])
+        self.assertEqual(w.excluded(), [3])
+        self.assertTrue(d._button_box.button(d._button_box.StandardButton.Ok).isEnabled())
+        self.assertEqual(d._describe_channel(3), "elec1-4 · Ch 4")
+
+    def test_disabled_without_arrays(self):
+        self.assertFalse(self._dialog({})._auto_array_btn.isEnabled())
+        unique = {c: f"{chr(65 + c)}{c}" for c in range(16)}  # A0, B1, ...: one per name
+        self.assertFalse(self._dialog(unique)._auto_array_btn.isEnabled())
+
+    def test_numbering_note(self):
+        from PySide6.QtWidgets import QLabel
+        texts = lambda d: " ".join(l.text() for l in d._group_widget.findChildren(QLabel))
+        self.assertIn("electrode numbers", texts(self._dialog({}, "electrode")))
+        self.assertIn("channel numbers", texts(self._dialog({}, "channel")))
+
+
 class TestEditingCarKeepsExclusions(unittest.TestCase):
 
     def test_electrodes_outside_the_saved_groups_show_as_excluded(self):

@@ -6,7 +6,7 @@ import unittest
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from models import StreamState, NUMBER_BY_ELECTRODE, NUMBER_BY_CHANNEL
-from models.stream_state import parse_electrode_numbers
+from models.stream_state import array_name, group_by_array, parse_electrode_numbers
 
 # Rows like RP01: row 0 = electrode 63, row 1 = 64, row 2 = electrode 10, row 3 = elec2-84, row 4 = analog
 LABELS = ["elec1-63", "elec1-64", "elec1-10", "elec2-84", "ainp2"]
@@ -63,6 +63,19 @@ class TestNumbering(unittest.TestCase):
         st = make_state()
         st.set_analog_channels([3, 4])
         self.assertEqual(set(st.electrode_numbers), {0, 1, 2})
+
+
+class TestArrays(unittest.TestCase):
+
+    def test_array_name(self):
+        for label, name in (("elec1-10", "elec1"), ("elec2-64", "elec2"), ("chan7", "chan"), ("A_12", "A"),
+                            ("ainp", ""), ("", ""), (None, "")):
+            self.assertEqual(array_name(label), name, label)
+
+    def test_group_by_array(self):
+        labels = {0: "elec2-1", 1: "elec1-1", 2: "elec2-2", 3: "elec1-2", 4: "odd5", 5: "nonumber"}
+        self.assertEqual(group_by_array([1, 3, 0, 2, 4, 5], labels), [("elec1", [1, 3]), ("elec2", [0, 2])])
+        self.assertEqual(group_by_array([0, 1], {}), [])
 
 
 if __name__ == "__main__":
