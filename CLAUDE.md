@@ -11,7 +11,7 @@ delete details that the code or git history already records.
 | | |
 |---|---|
 | Active branch | `NSP_Basic` (not pushed; branched from `main` @ `beb2da4`) |
-| Last commit | `6b84a8f` Fix a crash or freeze at the end of a long job |
+| Last commit | `b23764e` Shade stimulation events on the Time Series plot |
 | Tests | 191 passing: `tdtgui/bin/python -m unittest discover tests` |
 | Next step | Backlog items chosen 2026-11-18, one commit each: FFT/PSD range, CAR auto-group by array, event shading on Time Series: all done; the user tests them |
 
@@ -145,7 +145,7 @@ delete details that the code or git history already records.
     audit step 3, `deleteLater`) the dialog under its own `setValue`. Job progress now goes to the bar
     (`theme.ProgressDialog.progress_bar().setValue`), which never processes events; 30 detections under
     load ran clean (the old code crashed by the second).
-29. Event shading on Time Series (user request): faint modality-coloured bands (as the raster) behind the traces,
+29. (`b23764e`) Event shading on Time Series (user request): faint modality-coloured bands (as the raster) behind the traces,
     under the blanking shade (`TimeSeriesPlot.set_event_spans`, items reused like the blank spans);
     `MainWindow._update_event_shading` runs on every render and every event change. View → Shade Events on Time
     Series (QSettings `shade_events`, on by default).
