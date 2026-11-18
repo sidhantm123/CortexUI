@@ -184,6 +184,8 @@ def format_volts(v: float) -> str:
 
 # Most blanked spans shaded at once (only spans in view are passed in)
 MAX_BLANK_SPANS = 300
+MAX_EVENT_SPANS = 300  # events shaded at once (only those in view are passed)
+EVENT_SHADE_ALPHA = 45  # as the raster's event bands
 
 # Trace colours (tuned for the dark plot background)
 CHANNEL_COLORS = theme.TRACE_COLORS
@@ -229,6 +231,8 @@ class TimeSeriesPlot(QWidget):
         # Shaded blanked spans
         self._blank_items: List[pg.LinearRegionItem] = []
         self._blank_spans: List[Tuple[float, float]] = []  # what _blank_items show
+        self._event_items: List[pg.LinearRegionItem] = []
+        self._event_spans: List[Tuple[float, float, str]] = []  # what _event_items show
 
         # Spike threshold lines (draggable)
         self._threshold_lines: List[pg.InfiniteLine] = []
@@ -485,6 +489,32 @@ class TimeSeriesPlot(QWidget):
             item.setZValue(-10)
             self._plot.addItem(item)
             self._blank_items.append(item)
+
+    def set_event_spans(self, spans: List[Tuple[float, float, str]]):
+        """
+        Faintly shade stimulation events: (onset, offset, modality colour), behind the traces
+        and under the blanking shade (at most MAX_EVENT_SPANS). Like set_blank_spans, unchanged
+        spans cost nothing and existing items are moved and recoloured rather than rebuilt.
+        """
+        spans = [(float(a), float(b), str(c)) for a, b, c in spans[:MAX_EVENT_SPANS]]
+        if spans == self._event_spans:
+            return
+        self._event_spans = spans
+        for item in self._event_items[len(spans):]:
+            self._plot.removeItem(item)
+        del self._event_items[len(spans):]
+        for i, (start, end, color) in enumerate(spans):
+            fill = pg.mkColor(color)
+            fill.setAlpha(EVENT_SHADE_ALPHA)
+            if i < len(self._event_items):
+                self._event_items[i].setRegion((start, end))
+                self._event_items[i].setBrush(pg.mkBrush(fill))
+                continue
+            item = pg.LinearRegionItem(values=[start, end], brush=pg.mkBrush(fill),
+                                       pen=pg.mkPen(None), movable=False)
+            item.setZValue(-15)  # blanking shade is -10
+            self._plot.addItem(item)
+            self._event_items.append(item)
 
     def set_scatter_mode(self, enabled: bool):
         """

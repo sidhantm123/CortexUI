@@ -90,6 +90,21 @@ class TestRenderItems(unittest.TestCase):
         self.assertEqual(tuple(items[0].getRegion()), (1.5, 2.0))
         self.assertNotIn(items[1], plot.plot_item().items)
 
+    def test_event_spans_reuse_their_items(self):
+        plot = TimeSeriesPlot()
+        plot.set_event_spans([(1.0, 2.0, "#FF6B6B"), (3.0, 4.0, "#5AA9FF")])
+        items = list(plot._event_items)
+        self.assertEqual(items[1].brush.color().alpha(), 45)
+        plot.set_event_spans([(1.0, 2.0, "#FF6B6B"), (3.0, 4.0, "#5AA9FF")])
+        self.assertEqual(plot._event_items, items)
+        plot.set_event_spans([(1.5, 2.5, "#5AA9FF")])  # moved and recoloured, not rebuilt
+        self.assertEqual(plot._event_items, items[:1])
+        self.assertEqual(tuple(items[0].getRegion()), (1.5, 2.5))
+        self.assertEqual(items[0].brush.color().name(), "#5aa9ff")
+        self.assertLess(items[0].zValue(), -10)  # under the blanking shade
+        plot.set_event_spans([])
+        self.assertEqual(plot._event_items, [])
+
     def test_analog_markers_are_kept_while_panning(self):
         plot = AnalogPlot()
         plot.resize(800, 300)

@@ -11,9 +11,9 @@ delete details that the code or git history already records.
 | | |
 |---|---|
 | Active branch | `NSP_Basic` (not pushed; branched from `main` @ `beb2da4`) |
-| Last commit | `605023b` Auto-group CAR/CMR electrodes by array |
-| Tests | 190 passing: `tdtgui/bin/python -m unittest discover tests` |
-| Next step | Backlog items chosen 2026-11-18, one commit each: FFT/PSD range (done), CAR auto-group by array (done), event shading on Time Series; then the user tests |
+| Last commit | `6b84a8f` Fix a crash or freeze at the end of a long job |
+| Tests | 191 passing: `tdtgui/bin/python -m unittest discover tests` |
+| Next step | Backlog items chosen 2026-11-18, one commit each: FFT/PSD range, CAR auto-group by array, event shading on Time Series: all done; the user tests them |
 
 ### Done
 1. Analog input viewer and event detection (`78664d0`).
@@ -139,12 +139,16 @@ delete details that the code or git history already records.
     (`models.stream_state.array_name`: the label before its trailing number, `elec1-10` → `elec1`; arrays of < 2
     electrodes are left out). Both auto-group buttons keep Exclude marks. The dialog says whether its numbers are
     electrode or channel numbers, and hovering an electrode shows its label and channel.
-28. **Fix: crash or freeze at the end of a long job** (found while testing 29; intermittent, reproduced on RP01
+28. (`6b84a8f`) **Fix: crash or freeze at the end of a long job** (found while testing 29; intermittent, reproduced on RP01
     under load: segfault inside `QProgressDialog::setValue`, and a stall in `progress.close()`). For a modal
     dialog `setValue` processes events, so the job's result could be handled inside it and close (and, since
     audit step 3, `deleteLater`) the dialog under its own `setValue`. Job progress now goes to the bar
     (`theme.ProgressDialog.progress_bar().setValue`), which never processes events; 30 detections under
     load ran clean (the old code crashed by the second).
+29. Event shading on Time Series (user request): faint modality-coloured bands (as the raster) behind the traces,
+    under the blanking shade (`TimeSeriesPlot.set_event_spans`, items reused like the blank spans);
+    `MainWindow._update_event_shading` runs on every render and every event change. View → Shade Events on Time
+    Series (QSettings `shade_events`, on by default).
 
 ### Branches
 - **`main`:** the TDT/Blackrock viewer with filters, FFT/PSD, probe map, export and `.ccf` info.
@@ -416,25 +420,7 @@ tests/                unittest; test_blackrock.py has write_nsx_23() to build sy
 ### Audit fixes (approved 2026-11-17): all 11 steps done (§1 items 13, 14, 16–24)
 Untested for lack of data: TDT `.sev` stores, a real TDT block, a lab probeinterface file.
 
-### Step 4: Spike Detection tab (DONE: 4a + 4b; design notes below kept for reference)
-- **Threshold:**
-  - −k·σ with σ = median(|x|)/0.6745 on the filtered, blanked data **in the current view**, blanked samples excluded.
-  - k defaults to 4.75 and can be edited. Polarity is negative, positive or both; the refractory period is 2 ms.
-  - Warn when the chain has no high-pass or band-pass.
-- **Draggable horizontal threshold line** on the Time Series plot, in **Single Channel mode only**:
-  - Dragging sets k = |y|/σ for that channel.
-  - k is shared, and each channel's threshold is k × its own σ.
-- **Markers:** dots at crossings within the loaded buffer, updated live.
-- **Detect Spikes** runs over the whole recording:
-  - σ per channel is frozen from the current view at click time.
-  - A worker reads 10 s chunks of all neural channels, then applies blanking, the filter chain (with CAR) and crossing
-    detection, and stores only spike times.
-  - Show a hint if the view is under ~5 s.
-- **Raster tab** (Time Series | Raster | Spectrum):
-  - One row per channel with a `|` tick per spike.
-  - x-linked with the analog plot, with events shaded. Clicking a row selects that channel.
-- **Session and stale results:** spikes are saved in the session and go stale when blanking, filters or events change.
-- **Later step:** waveform snippets (overlaid ~2 ms cut-outs).
+### Spike Detection tab: done (§1 items 8–9); still to come: waveform snippets (overlaid ~2 ms cut-outs)
 
 ### Later / unscheduled
 - **Probe map takes priority (user request, 2026-10-27):** once probe-map import is fully built out, a loaded probe map
@@ -442,7 +428,6 @@ Untested for lack of data: TDT `.sev` stores, a real TDT block, a lab probeinter
   over channel order.
 - A "Plots" tab: the user intends to add it later. Don't build it yet.
 - Loading `.nev` spikes/events.
-- Shading events on the main plot (currently only on the analog plot).
 - Blanking is computed for the stream that is current when Apply is pressed. Multi-stream recordings (e.g. ns5 + ns2)
   would need it applied per stream.
 - Under CAR the buffer still holds every channel (~233–400 MB). It could hold only the displayed rows plus one

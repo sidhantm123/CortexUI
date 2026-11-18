@@ -61,6 +61,7 @@ pyinstaller --clean tdt_viewer.spec
    - **Detect Events** scans every assigned input. Events are numbered per modality and listed in the table.
    - **Event selection** or clicking a row jumps to that event. **Sync X-axes** links the two plots' time axes.
    - **Correct an event** by double-clicking its Onset/Offset cell or dragging its dashed line on the analog plot. Edited times are bold; right-click a row to reset.
+   - Events are also shaded on the Time Series plot in their modality's colour (**View → Shade Events on Time Series** turns it off).
 7. **Blanking tab** (needs detected events): one sub-tab per modality.
    - **Basic** blanks every electrode from onset − pre-pad to offset + post-pad and fills the gap linearly.
    - **Advanced** blanks from onset − pre-pad until, per channel, *N* consecutive windows have spike-band (250–5000 Hz) RMS below *k* × that channel's baseline (measured on clean stretches ≥ 3 s from any event), within the min/max post-pad. Choose trials and linear or cubic interpolation.

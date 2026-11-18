@@ -62,7 +62,7 @@ from .blanking_panel import BlankingPanel
 from .spike_panel import SpikePanel
 from .raster_plot import RasterPlot
 from .plot_widget import format_volts
-from .theme import set_role, set_primary, progress_dialog
+from .theme import MODALITY_COLORS, set_role, set_primary, progress_dialog
 from .toast import Toast, INFO, WARNING, ERROR
 
 
@@ -364,6 +364,11 @@ class MainWindow(QMainWindow):
         )
         self._set_recording_panel_visible(self._show_recording_action.isChecked())
 
+        self._shade_events_action = QAction("Shade Events on Time Series", self, checkable=True)
+        self._shade_events_action.setChecked(self._settings.value("shade_events", True, type=bool))
+        self._shade_events_action.toggled.connect(self._on_shade_events_toggled)
+        view_menu.addAction(self._shade_events_action)
+
         recording_info = QAction("Recording Info...", self)
         recording_info.setShortcut("Ctrl+I")
         recording_info.triggered.connect(self._on_recording_info)
@@ -422,6 +427,10 @@ class MainWindow(QMainWindow):
         self._last_plot_channels = []  # rebuild legends / Vrms labels
         view_start, view_end = state.get_view_range()
         self._rerender_from_buffer(view_start, view_end, state)
+
+    def _on_shade_events_toggled(self, shown: bool):
+        self._settings.setValue("shade_events", shown)
+        self._update_event_shading()
 
     def _set_recording_panel_visible(self, visible: bool):
         self._stream_panel.setVisible(visible)
@@ -1251,6 +1260,7 @@ class MainWindow(QMainWindow):
         self._time_plot.set_blank_spans(
             blank_spans(self._app_state.active_blanking(state.stream_name), channels, start, end)
         )
+        self._update_event_shading(start, end)
         scatter = state.scatter_mode
         if channels == self._last_plot_channels and scatter == self._last_scatter_mode:
             self._time_plot.update_data(plot_data, plot_time)
@@ -1342,6 +1352,23 @@ class MainWindow(QMainWindow):
         )
         self._raster_plot.set_events(self._app_state.events, self._app_state.modality_names())
         self._update_analog_title()
+        self._update_event_shading()
+
+    def _update_event_shading(self, start: Optional[float] = None, end: Optional[float] = None):
+        """Shade the events in view on the Time Series plot (View → Shade Events on Time Series)."""
+        state = self._app_state.get_current_state()
+        events = self._app_state.events
+        if state is None or not events or not self._shade_events_action.isChecked():
+            self._time_plot.set_event_spans([])
+            return
+        if start is None:
+            start, end = state.get_view_range()
+        colors = {m: MODALITY_COLORS[i % len(MODALITY_COLORS)]
+                  for i, m in enumerate(self._app_state.modality_names())}
+        self._time_plot.set_event_spans([
+            (e.onset, e.offset, colors.get(e.modality, MODALITY_COLORS[0]))
+            for e in sorted(events, key=lambda e: e.onset) if e.offset >= start and e.onset <= end
+        ])
 
     def _current_analog_key(self):
         """Selected analog channel, or None if nothing (still) loaded has it."""
@@ -1885,6 +1912,7 @@ class MainWindow(QMainWindow):
     def _on_event_edited(self, event):
         """An event's onset/offset was edited in the table."""
         self._analog_plot.refresh_events()
+        self._update_event_shading()
         self._blanking_panel.refresh()
         self._update_plot_chips()
 
@@ -1898,6 +1926,7 @@ class MainWindow(QMainWindow):
         self._analog_panel.refresh()
         self._analog_panel.show_selected_event(event)
         self._analog_plot.refresh_events()
+        self._update_event_shading()
         self._blanking_panel.refresh()
         self._update_plot_chips()
 
