@@ -11,9 +11,9 @@ delete details that the code or git history already records.
 | | |
 |---|---|
 | Active branch | `NSP_Basic` (not pushed; branched from `main` @ `beb2da4`) |
-| Last commit | `56b019c` Record the event shading commit in CLAUDE.md |
-| Tests | 192 passing: `tdtgui/bin/python -m unittest discover tests` |
-| Next step | User reports 2026-11-18: plot right-edge line (fixed), CAR/CMR deselect drag + Deselect All |
+| Last commit | `eb4f9f4` Fix a straight line at the right edge of zoomed-in plots |
+| Tests | 196 passing: `tdtgui/bin/python -m unittest discover tests` |
+| Next step | User tests the plot-edge fix and CAR/CMR deselection |
 
 ### Done
 1. Analog input viewer and event detection (`78664d0`).
@@ -149,9 +149,12 @@ delete details that the code or git history already records.
     under the blanking shade (`TimeSeriesPlot.set_event_spans`, items reused like the blank spans);
     `MainWindow._update_event_shading` runs on every render and every event change. View → Shade Events on Time
     Series (QSettings `shade_events`, on by default).
-30. **Fix (user report): a straight line at the right edge of both plots when zoomed in.** Item 18 turned the
+30. (`eb4f9f4`) **Fix (user report): a straight line at the right edge of both plots when zoomed in.** Item 18 turned the
     min/max decimation's leftover samples (up to `n_bins − 1`, e.g. 3,100 of an 83,100-sample view) into one bin
     drawn as two points. Bins are now `ceil(n / n_bins)` samples, so the leftover is shorter than one bin.
+31. CAR/CMR deselection (user request): a drag that starts on an electrode that already has the selected brush
+    removes the brush from the electrodes in the run (other subgroups' left alone); elsewhere drags assign as
+    before. **Deselect All** (status line) clears every electrode, exclusions included; the subgroups stay.
 
 ### Branches
 - **`main`:** the TDT/Blackrock viewer with filters, FFT/PSD, probe map, export and `.ccf` info.

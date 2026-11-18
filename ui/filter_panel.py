@@ -158,7 +158,9 @@ class ChannelGroupWidget(QWidget):
     Top bar: [+ Add Subgroup] [Exclude] [SG 1] [SG 2] ... — the selected one is the brush.
     Grid: channel buttons colored by assigned subgroup. Click one to give it the brush (or take
     it away again); drag from one to another to give the brush to every channel between them,
-    in reading order. The brush always takes channels over from another group or exclusion.
+    in reading order. The brush always takes channels over from another group or exclusion. A
+    drag that starts on a channel that already has the brush takes it away from the channels in
+    the run instead (others are left alone). Deselect All clears every channel.
     Status: "X in subgroups · Y excluded · Z left"
     """
 
@@ -184,7 +186,7 @@ class ChannelGroupWidget(QWidget):
         }  # channel -> subgroup index, EXCLUDED, or None (not decided yet)
         self._channel_buttons: Dict[int, QPushButton] = {}
         self._subgroup_buttons: List[QPushButton] = []
-        self._drag = None  # (anchor position, assignments at the press, dragged yet?)
+        self._drag = None  # (anchor position, assignments at the press, dragged yet?, removing?)
 
         self._setup_ui()
 
@@ -257,13 +259,19 @@ class ChannelGroupWidget(QWidget):
         ch_scroll.setWidget(self._grid)
         layout.addWidget(ch_scroll)
 
-        # Status label
+        # Status line, with Deselect All
+        status_row = QHBoxLayout()
         self._status_label = QLabel()
         set_role(self._status_label, "secondary")
-        layout.addWidget(self._status_label)
+        status_row.addWidget(self._status_label, 1)
+        self._deselect_all_btn = QPushButton("Deselect All")
+        self._deselect_all_btn.setToolTip("Take every electrode out of its subgroup or exclusion (the subgroups stay)")
+        self._deselect_all_btn.clicked.connect(self.deselect_all)
+        status_row.addWidget(self._deselect_all_btn)
+        layout.addLayout(status_row)
         hint = QLabel(
-            "Click an electrode, or drag from one to another to take every electrode between them. "
-            "A subgroup takes electrodes over from other groups."
+            "Click or drag across electrodes to add them to the selected subgroup (taking them from "
+            "other subgroups). Start a drag on one of its own electrodes to remove instead."
         )
         hint.setWordWrap(True)
         set_role(hint, "secondary")
@@ -353,25 +361,33 @@ class ChannelGroupWidget(QWidget):
         if self._brush is None:
             self._status_label.setText("Add a subgroup (or pick Exclude) first")
             return
-        self._drag = (pos, dict(self._assignments), False)
+        # Starting on an electrode that already has the brush makes this drag remove it
+        removing = self._assignments[self._channels[pos]] == self._brush
+        self._drag = (pos, dict(self._assignments), False, removing)
 
     def _on_grid_dragged(self, pos: int):
         if self._drag is None:
             return
-        anchor, before, moved = self._drag
+        anchor, before, moved, removing = self._drag
         if not moved and pos == anchor:
             return  # still a click
-        self._drag = (anchor, before, True)
+        self._drag = (anchor, before, True, removing)
         lo, hi = sorted((anchor, pos))
         for i, ch in enumerate(self._channels):
-            self._assign(ch, self._brush if lo <= i <= hi else before[ch])
+            if not lo <= i <= hi:
+                value = before[ch]
+            elif removing:
+                value = None if before[ch] == self._brush else before[ch]  # other groups untouched
+            else:
+                value = self._brush
+            self._assign(ch, value)
         self._update_status()
 
     def _on_grid_released(self):
         drag, self._drag = self._drag, None
         if drag is None:
             return
-        anchor, _, moved = drag
+        anchor, _, moved, _ = drag
         if moved:
             self.assignment_changed.emit()
         else:
@@ -442,6 +458,13 @@ class ChannelGroupWidget(QWidget):
                 if ch in self._assignments:
                     self._assign(ch, i)
 
+        self._update_status()
+        self.assignment_changed.emit()
+
+    def deselect_all(self):
+        """Every channel back to undecided, exclusions included; the subgroups stay."""
+        for ch in self._channels:
+            self._assign(ch, None)
         self._update_status()
         self.assignment_changed.emit()
 

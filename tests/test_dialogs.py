@@ -168,6 +168,52 @@ class TestChannelGroupDrag(unittest.TestCase):
         self.assertNotIn(9, groups[0])
         self.assertIn("4 excluded", self.w._status_label.text())
 
+    def _two_groups(self):
+        """SG 1 = electrodes 1-10, SG 2 = 11-64; SG 2 selected."""
+        self.w._on_add_subgroup()
+        self._drag(1, 10)
+        self.w._on_add_subgroup()
+        self._drag(11, 64)
+
+    def test_drag_from_a_member_removes(self):
+        self._two_groups()
+        self.w._on_subgroup_clicked(0)
+        self._drag(5, 9)  # starts on 5, already in SG 1
+        self.assertEqual(self._group(0), [1, 2, 3, 4, 10])
+        self.assertEqual(self._group(None), [5, 6, 7, 8, 9])
+        self._drag(3, 15)  # removes SG 1's 3, 4 and 10; 11-15 stay in SG 2
+        self.assertEqual(self._group(0), [1, 2])
+        self.assertEqual(self._group(1), list(range(11, 65)))
+        self.w._on_subgroup_clicked(1)
+        self._drag(20, 30)
+        self.assertEqual(self._group(1), list(range(11, 20)) + list(range(31, 65)))
+        self._drag(5, 9)  # starts outside SG 2: assigns, as before
+        self.assertEqual(self._group(1)[:5], [5, 6, 7, 8, 9])
+
+    def test_removing_drag_shrinks_back(self):
+        self._two_groups()
+        self._drag(20, 40, 25)  # out to 40, back to 25
+        self.assertEqual(self._group(None), list(range(20, 26)))
+
+    def test_exclude_brush_removes_too(self):
+        self._two_groups()
+        self.w._set_brush(EXCLUDED)
+        self._drag(30, 40)
+        self._drag(35, 38)  # starts on an excluded electrode: un-excludes
+        self.assertEqual(self._group(EXCLUDED), [30, 31, 32, 33, 34, 39, 40])
+        self.assertEqual(self._group(None), [35, 36, 37, 38])
+
+    def test_deselect_all(self):
+        self._two_groups()
+        self.w._set_brush(EXCLUDED)
+        self._drag(64)
+        n = len(self.changes)
+        self.w._deselect_all_btn.click()
+        self.assertEqual(self._group(None), list(range(1, 65)))
+        self.assertEqual(self.w._subgroups, ["SG 1", "SG 2"])  # the groups stay
+        self.assertFalse(self.w.all_assigned())
+        self.assertEqual(len(self.changes), n + 1)
+
     def test_gaps_and_edges_map_to_the_nearest_electrode(self):
         b1, b2 = (self.w._channel_buttons[i].geometry() for i in (0, 1))
         gap = QPoint((b1.right() + b2.left()) // 2, b1.center().y())
