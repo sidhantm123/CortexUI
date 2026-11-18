@@ -15,7 +15,7 @@ from dsp.decimation import decimate_for_display  # noqa: E402
 from models.analog import StimEvent  # noqa: E402
 from models.probe import ProbeContact, ProbeGeometry  # noqa: E402
 from ui.analog_plot import AnalogPlot  # noqa: E402
-from ui.plot_widget import TimeSeriesPlot  # noqa: E402
+from ui.plot_widget import SpectrumPlot, TimeSeriesPlot  # noqa: E402
 from ui.probe_map_widget import ProbeMapWidget  # noqa: E402
 
 
@@ -39,6 +39,23 @@ class TestDecimation(unittest.TestCase):
         d, dt = decimate_for_display(x, t, target_points=4000)
         self.assertEqual((d.shape[1], dt.size), (4000, 4000))
         self.assertEqual(dt[-1], t[-1])
+
+
+class TestSpectrumBand(unittest.TestCase):
+
+    def test_band_crops_the_drawn_spectrum(self):
+        plot = SpectrumPlot()
+        freqs = np.linspace(0, 1000, 1001)
+        plot.set_data(freqs, np.ones((2, freqs.size)), [3, 5], method="psd")
+        drawn = lambda: [item.getData()[0] for item in plot._plot_items.values()]
+        self.assertTrue(all(x.size == 1001 for x in drawn()))
+        plot.set_band(55.0, 65.0)  # redraws the last result, no new data needed
+        for x in drawn():
+            self.assertEqual((x.min(), x.max(), x.size), (55.0, 65.0, 11))
+        plot.set_data(freqs, np.ones(freqs.size), [3])  # a new result keeps the band
+        self.assertEqual(drawn()[0].size, 11)
+        plot.set_band(None, None)
+        self.assertEqual(drawn()[0].size, 1001)
 
 
 class TestRenderItems(unittest.TestCase):

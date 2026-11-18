@@ -573,6 +573,7 @@ class MainWindow(QMainWindow):
 
         # Spectrum panel
         self._spectrum_panel.analyze_requested.connect(self._on_analyze_requested)
+        self._spectrum_panel.band_changed.connect(self._spectrum_plot.set_band)  # no re-analysis
         self._spectrum_panel.enable_selection_changed.connect(
             self._time_plot.enable_selection
         )
@@ -861,6 +862,7 @@ class MainWindow(QMainWindow):
         )
 
         def done(result):
+            self._spectrum_plot.set_band(*params["band"])
             self._spectrum_plot.set_data(
                 result["freqs"], result["magnitude"], channels, method=params["method"],
                 channel_names=[state.channel_label(c) for c in channels],

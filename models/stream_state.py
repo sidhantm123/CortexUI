@@ -80,6 +80,8 @@ class StreamState:
     # FFT/PSD settings
     fft_start: Optional[float] = None
     fft_end: Optional[float] = None
+    fft_fmin: Optional[float] = None  # frequency range shown in the Spectrum plot (None = 0 / Nyquist)
+    fft_fmax: Optional[float] = None
     fft_channels: List[int] = field(default_factory=list)
     psd_nperseg: int = 1024
     psd_overlap: float = 0.5
@@ -230,6 +232,8 @@ class StreamState:
             "scatter_mode": self.scatter_mode,
             "fft_start": self.fft_start,
             "fft_end": self.fft_end,
+            "fft_fmin": self.fft_fmin,
+            "fft_fmax": self.fft_fmax,
             "fft_channels": self.fft_channels,
             "psd_nperseg": self.psd_nperseg,
             "psd_overlap": self.psd_overlap,
@@ -259,6 +263,8 @@ class StreamState:
         state.scatter_mode = data.get("scatter_mode", False)
         state.fft_start = data.get("fft_start")
         state.fft_end = data.get("fft_end")
+        state.fft_fmin = data.get("fft_fmin")
+        state.fft_fmax = data.get("fft_fmax")
         state.fft_channels = data.get("fft_channels", [])
         state.psd_nperseg = data.get("psd_nperseg", 1024)
         state.psd_overlap = data.get("psd_overlap", 0.5)

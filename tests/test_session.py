@@ -88,6 +88,14 @@ class TestAtomicLoads(unittest.TestCase):
         self._unchanged(block, reader)
         self.assertEqual(self.state.filters[0].cutoff_low, 300.0)
 
+    def test_frequency_range_is_saved(self):
+        self.state.fft_fmin, self.state.fft_fmax = 55.0, 65.0
+        self.app.save_session(self.session)
+        restored = AppState()
+        restored.load_session(self.session)
+        st = restored.stream_states["ns5"]
+        self.assertEqual((st.fft_fmin, st.fft_fmax), (55.0, 65.0))
+
     def test_save_is_atomic(self):
         self.app.save_session(self.session)
         with open(self.session) as f:

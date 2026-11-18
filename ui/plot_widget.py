@@ -599,6 +599,8 @@ class SpectrumPlot(QWidget):
         self._plot_items: Dict[int, pg.PlotDataItem] = {}
         self._log_freq = False
         self._log_mag = True  # Default to dB scale
+        self._result = None  # (freqs, magnitude, channels, method, names) of the last analysis
+        self._band = (None, None)  # Hz shown (None = no limit)
 
     def _setup_ui(self):
         """Set up the widget layout."""
@@ -630,7 +632,7 @@ class SpectrumPlot(QWidget):
         channel_names: Optional[List[str]] = None,
     ):
         """
-        Set spectrum data to display.
+        Set spectrum data to display (kept whole; set_band chooses the frequencies drawn).
 
         Args:
             freqs: Frequency values in Hz
@@ -639,18 +641,27 @@ class SpectrumPlot(QWidget):
             method: 'fft' or 'psd' for appropriate labeling
             channel_names: Legend names, one per entry in channel_indices
         """
-        # Clear existing
+        if freqs is None or magnitude is None:
+            self._result = None
+        else:
+            self._result = (np.asarray(freqs), np.atleast_2d(magnitude), list(channel_indices),
+                            method, channel_names)
+        self._draw()
+
+    def set_band(self, fmin: Optional[float], fmax: Optional[float]):
+        """Show only fmin..fmax Hz (None = no limit on that side); redraws the current result."""
+        self._band = (fmin, fmax)
+        self._draw()
+
+    def _draw(self):
         for item in self._plot_items.values():
             self._plot.removeItem(item)
         self._plot_items.clear()
 
-        self._stack.set_empty(freqs is None or magnitude is None)
-        if freqs is None or magnitude is None:
+        self._stack.set_empty(self._result is None)
+        if self._result is None:
             return
-
-        # Ensure 2D
-        if magnitude.ndim == 1:
-            magnitude = magnitude.reshape(1, -1)
+        freqs, magnitude, channel_indices, method, channel_names = self._result
 
         # Update axis label
         if method == "psd":
@@ -667,6 +678,16 @@ class SpectrumPlot(QWidget):
             else:
                 theme.axis_label(self._plot, "left", "Magnitude (dB)")
 
+        # The frequencies drawn: the band, without 0 Hz on a log axis
+        fmin, fmax = self._band
+        keep = np.ones(freqs.size, dtype=bool)
+        if fmin is not None:
+            keep &= freqs >= fmin
+        if fmax is not None:
+            keep &= freqs <= fmax
+        if self._log_freq:
+            keep &= freqs > 0
+
         # Plot each channel
         for i, ch_idx in enumerate(channel_indices):
             if i >= magnitude.shape[0]:
@@ -674,19 +695,9 @@ class SpectrumPlot(QWidget):
 
             color = QColor(CHANNEL_COLORS[i % len(CHANNEL_COLORS)])
             pen = pg.mkPen(color=color, width=1)
-
-            if self._log_freq:
-                # Filter out zero/negative frequencies for log scale
-                mask = freqs > 0
-                plot_freqs = freqs[mask]
-                plot_mag = magnitude[i, mask]
-            else:
-                plot_freqs = freqs
-                plot_mag = magnitude[i]
-
             plot_item = self._plot.plot(
-                plot_freqs,
-                plot_mag,
+                freqs[keep],
+                magnitude[i, keep],
                 pen=pen,
                 name=channel_names[i] if channel_names else f"Ch {ch_idx}",
             )
@@ -695,7 +706,7 @@ class SpectrumPlot(QWidget):
         # Set log scale if enabled
         self._plot.setLogMode(x=self._log_freq, y=False)
 
-        # Auto-range
+        # Auto-range (to the band: only it is drawn)
         self._plot.enableAutoRange()
 
     def set_log_frequency(self, enabled: bool):
@@ -710,7 +721,5 @@ class SpectrumPlot(QWidget):
 
     def clear(self):
         """Clear all data from the plot."""
-        for item in self._plot_items.values():
-            self._plot.removeItem(item)
-        self._plot_items.clear()
-        self._stack.set_empty(True)
+        self._result = None
+        self._draw()

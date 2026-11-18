@@ -15,6 +15,8 @@ app = QApplication.instance() or QApplication([])
 from models.filter_config import FilterConfig, FilterType  # noqa: E402
 from ui.filter_panel import EXCLUDED, ChannelGroupWidget, FilterEditDialog  # noqa: E402
 from ui.probe_import_dialog import ProbeImportDialog  # noqa: E402
+from ui.spectrum_panel import SpectrumPanel  # noqa: E402
+from models import StreamState  # noqa: E402
 
 
 class TestProbeTableEditor(unittest.TestCase):
@@ -61,6 +63,31 @@ class TestFilterDialog(unittest.TestCase):
         dialog.accept()
         self.assertEqual(dialog.result(), 1)
         self.assertEqual(dialog.get_config().channel_groups, [[0, 1], [2]])
+
+
+class TestFrequencyRange(unittest.TestCase):
+
+    def test_band_follows_the_boxes_and_refuses_min_above_max(self):
+        state = StreamState("ns5", 4, 30000.0, 10.0)
+        panel = SpectrumPanel()
+        bands = []
+        panel.band_changed.connect(lambda a, b: bands.append((a, b)))
+        panel.set_state(state)
+        self.assertEqual(bands[-1], (0.0, 15000.0))  # full range by default
+        self.assertEqual((state.fft_fmin, state.fft_fmax), (None, None))
+        panel._fmin_spin.setValue(250.0)
+        panel._fmax_spin.setValue(5000.0)
+        self.assertEqual(bands[-1], (250.0, 5000.0))
+        self.assertEqual((state.fft_fmin, state.fft_fmax), (250.0, 5000.0))
+        n = len(bands)
+        panel._fmin_spin.setValue(6000.0)  # above max
+        self.assertEqual(len(bands), n)
+        self.assertFalse(panel._analyze_btn.isEnabled())
+        self.assertIsNone(panel.band())
+        panel._fmin_spin.setValue(300.0)
+        self.assertTrue(panel._analyze_btn.isEnabled())
+        panel.set_state(state)  # e.g. switching back to this stream
+        self.assertEqual(panel.band(), (300.0, 5000.0))
 
 
 class TestChannelGroupDrag(unittest.TestCase):

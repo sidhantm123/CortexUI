@@ -434,6 +434,8 @@ class AppState:
                 current.scatter_mode = saved.scatter_mode
                 current.fft_start = saved.fft_start
                 current.fft_end = saved.fft_end
+                current.fft_fmin = saved.fft_fmin
+                current.fft_fmax = saved.fft_fmax
                 current.fft_channels = [
                     c for c in saved.fft_channels
                     if c < current.num_channels

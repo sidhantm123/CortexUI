@@ -18,6 +18,7 @@ from PySide6.QtWidgets import (
 )
 
 from models import StreamState
+from .theme import set_role
 
 
 class SpectrumPanel(QWidget):
@@ -27,18 +28,20 @@ class SpectrumPanel(QWidget):
     Features:
     - Method selection (FFT/PSD)
     - Time interval selection
+    - Frequency range shown (applies to the last result at once, no re-analysis)
     - Channel selection for analysis
     - PSD parameters (nperseg, overlap)
     """
 
     # Signals
     analyze_requested = Signal(dict)  # Analysis parameters
+    band_changed = Signal(float, float)  # frequency range to show (Hz)
     enable_selection_changed = Signal(bool)  # Enable/disable plot selection
 
     def __init__(self, parent=None):
         super().__init__(parent)
-        self._setup_ui()
         self._state: Optional[StreamState] = None
+        self._setup_ui()
 
     def _setup_ui(self):
         """Set up the widget layout."""
@@ -90,6 +93,26 @@ class SpectrumPanel(QWidget):
 
         layout.addWidget(interval_group)
 
+        # Frequency range shown in the Spectrum plot
+        band_group = QGroupBox("Frequency Range")
+        band_layout = QVBoxLayout(band_group)
+        self._fmin_spin = QDoubleSpinBox()
+        self._fmax_spin = QDoubleSpinBox()
+        for label, spin in (("Min (Hz):", self._fmin_spin), ("Max (Hz):", self._fmax_spin)):
+            row = QHBoxLayout()
+            row.addWidget(QLabel(label))
+            spin.setDecimals(1)
+            spin.setRange(0.0, 15000.0)
+            spin.setKeyboardTracking(False)  # one update per typed number
+            row.addWidget(spin)
+            band_layout.addLayout(row)
+        self._fmax_spin.setValue(15000.0)
+        self._band_note = QLabel("")
+        set_role(self._band_note, "error")
+        self._band_note.setVisible(False)
+        band_layout.addWidget(self._band_note)
+        layout.addWidget(band_group)
+
         # Channel selection
         channel_group = QGroupBox("Channels")
         channel_layout = QVBoxLayout(channel_group)
@@ -134,6 +157,8 @@ class SpectrumPanel(QWidget):
         # Analyze button
         self._analyze_btn = QPushButton("Analyze")
         self._analyze_btn.clicked.connect(self._on_analyze)
+        self._fmin_spin.valueChanged.connect(self._on_band_changed)
+        self._fmax_spin.valueChanged.connect(self._on_band_changed)
         layout.addWidget(self._analyze_btn)
 
         layout.addStretch()
@@ -159,6 +184,17 @@ class SpectrumPanel(QWidget):
             self._end_spin.setValue(state.fft_end)
         else:
             self._end_spin.setValue(state.view_end)
+
+        # Frequency range: the full spectrum unless one was set
+        nyquist = state.sample_rate / 2
+        for spin in (self._fmin_spin, self._fmax_spin):
+            spin.blockSignals(True)
+            spin.setMaximum(nyquist)
+        self._fmin_spin.setValue(state.fft_fmin if state.fft_fmin is not None else 0.0)
+        self._fmax_spin.setValue(state.fft_fmax if state.fft_fmax is not None else nyquist)
+        for spin in (self._fmin_spin, self._fmax_spin):
+            spin.blockSignals(False)
+        self._on_band_changed()
 
         # Update PSD params
         self._nperseg_spin.setValue(state.psd_nperseg)
@@ -192,6 +228,24 @@ class SpectrumPanel(QWidget):
         """Handle use all channels checkbox."""
         use_all = state == Qt.CheckState.Checked.value
         self._channel_list.setEnabled(not use_all)
+
+    def band(self):
+        """(min Hz, max Hz) to show, or None while min is not below max."""
+        fmin, fmax = self._fmin_spin.value(), self._fmax_spin.value()
+        return (fmin, fmax) if fmin < fmax else None
+
+    def _on_band_changed(self, *_):
+        band = self.band()
+        self._band_note.setText("" if band else "Min must be below Max")
+        self._band_note.setVisible(band is None)
+        self._analyze_btn.setEnabled(band is not None)
+        if band is None:
+            return
+        if self._state is not None:
+            nyquist = self._state.sample_rate / 2
+            self._state.fft_fmin = band[0] if band[0] > 0 else None
+            self._state.fft_fmax = band[1] if band[1] < nyquist else None
+        self.band_changed.emit(*band)
 
     def update_interval(self, start: float, end: float):
         """Update interval from plot selection."""
@@ -228,6 +282,7 @@ class SpectrumPanel(QWidget):
             "channels": channels,
             "nperseg": self._nperseg_spin.value(),
             "overlap": self._overlap_spin.value(),
+            "band": self.band(),
         }
         self.analyze_requested.emit(params)
 
