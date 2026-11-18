@@ -11,9 +11,9 @@ delete details that the code or git history already records.
 | | |
 |---|---|
 | Active branch | `release/v1.0` (from `main` @ `cb5b2dc`, after PR #5 merged the settings help) |
-| Last commit | Packaging step 3: `.github/workflows/release.yml`, `packaging/release_notes.md` |
+| Last commit | Packaging step 4: README Download + release how-to |
 | Tests | 202 passing: `tdtgui/bin/python -m tests` (exit code 0 checked) |
-| Next step | Packaging step 3: first CI run on the three runners; then step 4 (§4) |
+| Next step | PR `release/v1.0` → `main` (CI green); after the merge, tag `v1.0.0` with the user's OK (§4) |
 
 ### Done
 1. Analog events (`78664d0`), editable onset/offset (`7b559ef`), Blanking tab Basic/Advanced (`e60ac42`).
@@ -113,6 +113,12 @@ delete details that the code or git history already records.
     window icon outside macOS. `cortexui.spec` (replaces `tdt_viewer.spec`; `upx=False`, `h5py` excluded,
     `LSMinimumSystemVersion` 14.0) and `packaging/make_dmg.sh` (ditto + Applications link, hdiutil UDZO, retries).
     Local Intel build: 181 MB app, 87 MB `.dmg`, ad-hoc signed, smoke test OK on RP01 (5 s warm, ~40 s first run).
+35. (`a237f04`, fixes `f80f111` `71a5723` `e3b3191`) Packaging step 3: `.github/workflows/release.yml` + release notes.
+    The first CI runs found: Windows can't delete a still-mapped `.nsX` (`tests.remove_dir`), and **the test process
+    crashed at exit after "OK" on every platform** (see Conventions: exit via `os._exit`, `python -m tests`). Job
+    logs need admin rights, so failures go to public annotations (`packaging/ci_annotate.py`). First green run
+    44378241396 (6 min): artifacts Apple Silicon 73.6 MB, Intel 81.9 MB, Windows 103 MB.
+36. Packaging step 4: README Download section (`…/releases/latest`), how to make a release, macOS first-launch help.
 
 ### Branches and repo
 - **Repo:** `github.com/sidhantm123/CortexUI` (public; renamed from `tdtgui` on 2026-11-19, old URLs redirect).
@@ -391,17 +397,9 @@ tests/                unittest; test_blackrock.py has write_nsx_23() to build sy
 
 ## 4. Roadmap
 
-### Package and release CortexUI v1.0 (approved 2026-11-18; one commit per step)
-Decisions: name CortexUI, generated icon, repo stays public, releases at `…/CortexUI/releases/latest`.
-1–2. Name, `version.py`, `--smoke-test`; icon, spec, `.dmg`: done (§1 items 33–34).
-   **Minimum macOS 14:** numpy/scipy install as `macosx_14_0` wheels (PySide6's say 13). **Release builds come
-   from the CI only:** this Mac's Homebrew Python bundles its own libssl/liblzma built for macOS 26.
-3. `.github/workflows/release.yml` (workflow "Build"): pushes to `release/**`, PRs into `main` and manual runs build
-   and smoke-test; a `v*` tag (must equal `version.py`) also runs `gh release create --draft` with the three files
-   and `packaging/release_notes.md` (which file, unsigned first launch, error.log). Runners `windows-latest`,
-   `macos-latest` (macOS 26 arm64), `macos-15-intel`; actions checkout@v7, setup-python@v7, upload@v7, download@v8.
-   Run status is public: `api.github.com/repos/sidhantm123/CortexUI/actions/runs`.
-4. README Download/Build, PR (CI green on all three), then tag `v1.0.0` with the user's OK; the user publishes.
+### Package and release CortexUI v1.0 (approved 2026-11-18): steps 1–4 done (§1 items 33–36)
+Left: PR `release/v1.0` → `main` (CI green on all three), then, with the user's OK at that moment, `git tag v1.0.0`
+on `main` and push it; the workflow makes a draft release; the user tries the files and publishes it.
 
 ### Audit fixes (approved 2026-11-17): all 11 steps done (§1 items 13, 14, 16–24)
 Untested for lack of data: TDT `.sev` stores, a real TDT block, a lab probeinterface file.
@@ -464,4 +462,10 @@ Untested for lack of data: TDT `.sev` stores, a real TDT block, a lab probeinter
   - `h5py` is installed in the venv but not required.
 - **Headless UI checks:** `QT_QPA_PLATFORM=offscreen`, then `w.grab().save(...)` for screenshots.
 - **Tools:** `gh` is not installed; the user merges PRs on GitHub.
+- **Packaging:** `pyinstaller --clean --noconfirm cortexui.spec`, `packaging/make_dmg.sh`, `packaging/make_icons.py`;
+  `QT_QPA_PLATFORM=offscreen dist/CortexUI.app/Contents/MacOS/CortexUI --smoke-test FOLDER`. Minimum macOS 14
+  (numpy/scipy wheels). Release files come from the CI only (this Mac's Homebrew Python bundles libs for macOS 26).
+- **CI status without signing in:** the anonymous API allows 60 requests/hour (poll ≥ 2 min; `ci_watch`-style
+  monitors used it up); annotations are public (`/check-runs/<job>/annotations`); the run's web page
+  (`github.com/sidhantm123/CortexUI/actions/runs/<id>`) is not rate-limited.
 - **Machine:** 8 GB RAM. Avoid holding whole-file arrays of all channels.
