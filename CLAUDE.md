@@ -10,10 +10,11 @@ delete details that the code or git history already records.
 
 | | |
 |---|---|
-| Active branch | `release/v1.0` (from `main` @ `cb5b2dc`, after PR #5 merged the settings help) |
-| Last commit | The user's logo (`assets/logo.png`) as the app icon |
+| Active branch | `docs/v1-released` (from `main` @ `8eb0c0d`, after PR #6 merged `release/v1.0`) |
+| Last commit | Record the CortexUI 1.0.0 release in CLAUDE.md |
+| Released | **CortexUI 1.0.0**, published 2026-11-19: `github.com/sidhantm123/CortexUI/releases/latest` |
 | Tests | 202 passing: `tdtgui/bin/python -m tests` (exit code 0 checked) |
-| Next step | PR `release/v1.0` → `main` (CI green); after the merge, tag `v1.0.0` with the user's OK (§4) |
+| Next step | None scheduled: waiting for lab feedback on 1.0.0 (Windows and Intel Mac untested by a person); see §4 Later |
 
 ### Done
 1. Analog events (`78664d0`), editable onset/offset (`7b559ef`), Blanking tab Basic/Advanced (`e60ac42`).
@@ -119,12 +120,16 @@ delete details that the code or git history already records.
     crashed at exit after "OK" on every platform** (see Conventions: exit via `os._exit`, `python -m tests`). Job
     logs need admin rights, so failures go to public annotations (`packaging/ci_annotate.py`). First green run
     44378241396 (6 min): artifacts Apple Silicon 73.6 MB, Intel 81.9 MB, Windows 103 MB.
-36. Packaging step 4: README Download section (`…/releases/latest`), how to make a release, macOS first-launch help.
+36. (`fbebb28`, logo `84e8771`) Packaging step 4: README Download section (`…/releases/latest`), how to make a release, macOS first-launch help.
+
+37. **CortexUI 1.0.0 released** (PR #6 → `main` @ `8eb0c0d`, tag `v1.0.0`; the user published the draft on
+    2026-11-19). Release run 44383360463. The released Apple Silicon `.dmg`, downloaded from `releases/latest`, ran
+    natively (arm64, `minos` 14.0, signature valid) and passed the smoke test on RP01.
 
 ### Branches and repo
 - **Repo:** `github.com/sidhantm123/CortexUI` (public; renamed from `tdtgui` on 2026-11-19, old URLs redirect).
-- **`main`:** everything so far (PR #4 merged `NSP_Basic`, PR #5 the settings help). New work branches from it.
-- **`release/v1.0`:** packaging (§4).
+- **`main`:** everything so far (PR #4 `NSP_Basic`, PR #5 settings help, PR #6 `release/v1.0` = 1.0.0). New work
+  branches from it; releases are tags on `main` (`v1.0.0` = `8eb0c0d`).
 - **`nsp_pipeline`:** a **local archive only, never merge it**. It held an elaborate NSP preprocessing pipeline the user dropped
   as "too complicated". Its `nsp_pipeline/events.py` helpers were reused in `dsp/events.py`.
 
@@ -398,9 +403,10 @@ tests/                unittest; test_blackrock.py has write_nsx_23() to build sy
 
 ## 4. Roadmap
 
-### Package and release CortexUI v1.0 (approved 2026-11-18): steps 1–4 done (§1 items 33–36)
-Left: PR `release/v1.0` → `main` (CI green on all three), then, with the user's OK at that moment, `git tag v1.0.0`
-on `main` and push it; the workflow makes a draft release; the user tries the files and publishes it.
+### CortexUI 1.0.0: released 2026-11-19 (§1 items 33–37)
+Untested by a person: the Windows `.zip` and the Intel `.dmg` (only the CI smoke test). **Next release:** bump
+`APP_VERSION` in `version.py`, merge into `main`, then tag `vX.Y.Z` **only with the user's OK at that moment**; the
+workflow makes a draft; the user tries the files and publishes. A published tag is never moved (fix → next version).
 
 ### Audit fixes (approved 2026-11-17): all 11 steps done (§1 items 13, 14, 16–24)
 Untested for lack of data: TDT `.sev` stores, a real TDT block, a lab probeinterface file.
