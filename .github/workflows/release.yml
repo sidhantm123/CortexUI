@@ -48,14 +48,12 @@ jobs:
         run: python -m pip install -r requirements.txt
 
       - name: Unit tests
-        # On failure the end of the output also becomes an annotation, which anyone can read
-        # (job logs need admin rights)
+        # On failure the details also become annotations, which anyone can read (job logs need
+        # admin rights); faulthandler names the test if one crashes
         run: |
           if ! python -X faulthandler -m unittest discover -v tests > tests.log 2>&1; then
             cat tests.log
-            msg=$(tail -n 60 tests.log)
-            msg=${msg//'%'/'%25'}; msg=${msg//$'\r'/}; msg=${msg//$'\n'/'%0A'}
-            echo "::error title=Unit tests failed::$msg"
+            python packaging/ci_annotate.py "Unit tests failed" tests.log
             exit 1
           fi
           tail -n 3 tests.log
@@ -80,9 +78,7 @@ jobs:
           else
             cat smoke.log
             # The app prints why; the windowed Windows app has no console and writes error.log
-            msg=$({ cat smoke.log; tail -n 40 "$log" 2>/dev/null || true; } | tail -n 60)
-            msg=${msg//'%'/'%25'}; msg=${msg//$'\r'/}; msg=${msg//$'\n'/'%0A'}
-            echo "::error title=The built app failed its smoke test::$msg"
+            python packaging/ci_annotate.py "Smoke test failed" smoke.log "$log"
             exit 1
           fi
 
