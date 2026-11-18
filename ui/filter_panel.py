@@ -30,6 +30,7 @@ from models import StreamState, FilterConfig, FilterType
 from models.probe import ProbeGeometry
 from models.stream_state import group_by_array
 from . import theme
+from .help_text import explain, tooltip
 from .theme import set_role, set_primary
 
 
@@ -210,14 +211,12 @@ class ChannelGroupWidget(QWidget):
         self._add_sg_btn = QPushButton("+ Add Subgroup")
         self._add_sg_btn.setFixedHeight(30)
         self._add_sg_btn.clicked.connect(lambda: self._on_add_subgroup())
+        explain("car.add_subgroup", self._add_sg_btn)
         self._sg_layout.addWidget(self._add_sg_btn)
 
         self._exclude_btn = QPushButton("Exclude")
         self._exclude_btn.setFixedHeight(30)
-        self._exclude_btn.setToolTip(
-            "Leave electrodes out of CAR/CMR (e.g. the stimulation electrode): they are not "
-            "re-referenced and not part of any average"
-        )
+        explain("car.exclude", self._exclude_btn)
         self._exclude_btn.setStyleSheet(self._exclude_style(False))
         self._exclude_btn.clicked.connect(lambda: self._set_brush(EXCLUDED))
         self._sg_layout.addWidget(self._exclude_btn)
@@ -265,7 +264,7 @@ class ChannelGroupWidget(QWidget):
         set_role(self._status_label, "secondary")
         status_row.addWidget(self._status_label, 1)
         self._deselect_all_btn = QPushButton("Deselect All")
-        self._deselect_all_btn.setToolTip("Take every electrode out of its subgroup or exclusion (the subgroups stay)")
+        explain("car.deselect_all", self._deselect_all_btn)
         self._deselect_all_btn.clicked.connect(self.deselect_all)
         status_row.addWidget(self._deselect_all_btn)
         layout.addLayout(status_row)
@@ -275,6 +274,7 @@ class ChannelGroupWidget(QWidget):
         )
         hint.setWordWrap(True)
         set_role(hint, "secondary")
+        explain("car.grid", hint)
         layout.addWidget(hint)
         layout.addStretch()  # spare height below the text, not between the lines
         self._update_status()
@@ -541,6 +541,7 @@ class FilterEditDialog(QDialog):
         self._type_combo.addItem("Common Median Ref (CMR)", FilterType.CMR)
         self._type_combo.currentIndexChanged.connect(self._on_type_changed)
         form.addRow("Type:", self._type_combo)
+        explain("filter.type", self._type_combo, form.labelForField(self._type_combo))
 
         # Order (for butter filters)
         self._order_spin = QSpinBox()
@@ -548,6 +549,7 @@ class FilterEditDialog(QDialog):
         self._order_spin.setValue(4)
         self._order_label = QLabel("Order:")
         form.addRow(self._order_label, self._order_spin)
+        explain("filter.order", self._order_label, self._order_spin)
 
         # Cutoff low
         nyquist = self._sample_rate / 2
@@ -557,6 +559,7 @@ class FilterEditDialog(QDialog):
         self._cutoff_low_spin.setSuffix(" Hz")
         self._cutoff_low_label = QLabel("Low Cutoff:")
         form.addRow(self._cutoff_low_label, self._cutoff_low_spin)
+        explain("filter.cutoff_low", self._cutoff_low_label, self._cutoff_low_spin)
 
         # Cutoff high
         self._cutoff_high_spin = QDoubleSpinBox()
@@ -565,6 +568,7 @@ class FilterEditDialog(QDialog):
         self._cutoff_high_spin.setSuffix(" Hz")
         self._cutoff_high_label = QLabel("High Cutoff:")
         form.addRow(self._cutoff_high_label, self._cutoff_high_spin)
+        explain("filter.cutoff_high", self._cutoff_high_label, self._cutoff_high_spin)
 
         # Notch frequency
         self._notch_freq_spin = QDoubleSpinBox()
@@ -573,6 +577,7 @@ class FilterEditDialog(QDialog):
         self._notch_freq_spin.setSuffix(" Hz")
         self._notch_freq_label = QLabel("Notch Freq:")
         form.addRow(self._notch_freq_label, self._notch_freq_spin)
+        explain("filter.notch_freq", self._notch_freq_label, self._notch_freq_spin)
 
         # Notch Q
         self._notch_q_spin = QDoubleSpinBox()
@@ -580,6 +585,7 @@ class FilterEditDialog(QDialog):
         self._notch_q_spin.setValue(30)
         self._notch_q_label = QLabel("Q Factor:")
         form.addRow(self._notch_q_label, self._notch_q_spin)
+        explain("filter.notch_q", self._notch_q_label, self._notch_q_spin)
 
         layout.addLayout(form)
 
@@ -599,22 +605,19 @@ class FilterEditDialog(QDialog):
         auto_row = QHBoxLayout(self._auto_group_row)
         auto_row.setContentsMargins(0, 0, 0, 0)
         self._auto_group_btn = QPushButton("Auto-group by Shank")
-        self._auto_group_btn.setToolTip(
-            "Assign channels to subgroups based on the loaded probe shank layout"
-        )
+        explain("car.auto_shank", self._auto_group_btn)
         self._auto_group_btn.clicked.connect(self._on_auto_group_by_shank)
         self._auto_group_btn.setEnabled(self._probe is not None)
         auto_row.addWidget(self._auto_group_btn)
         self._arrays = group_by_array(self._channels, self._labels)
         self._auto_array_btn = QPushButton("Auto-group by Array")
         self._auto_array_btn.setEnabled(bool(self._arrays))
-        self._auto_array_btn.setToolTip(
-            "One subgroup per array, from the channel labels: "
-            + ", ".join(f"{name} ({len(chs)})" for name, chs in self._arrays)
+        self._auto_array_btn.setToolTip(tooltip("car.auto_array") + "<br>" + (
+            "Found: " + ", ".join(f"{name} ({len(chs)})" for name, chs in self._arrays)
             if self._arrays else
             "No array found: the channel labels don't share a name before their number "
             "(e.g. elec1-1 … elec1-64)"
-        )
+        ))
         self._auto_array_btn.clicked.connect(self._on_auto_group_by_array)
         auto_row.addWidget(self._auto_array_btn)
         self._auto_group_row.setVisible(False)
@@ -845,6 +848,7 @@ class FilterPanel(QWidget):
         header.addStretch()
         self._global_bypass_check = QCheckBox("Bypass All")
         self._global_bypass_check.stateChanged.connect(self._on_global_bypass_changed)
+        explain("filters.bypass_all", self._global_bypass_check)
         header.addWidget(self._global_bypass_check)
         layout.addLayout(header)
 
@@ -866,6 +870,7 @@ class FilterPanel(QWidget):
         self._remove_btn.clicked.connect(self._on_remove_filter)
         btn_layout.addWidget(self._remove_btn)
         layout.addLayout(btn_layout)
+        explain("filters.chain", self._filter_list, self._add_btn, self._edit_btn, self._remove_btn)
 
         # Reorder buttons
         order_layout = QHBoxLayout()
@@ -875,11 +880,13 @@ class FilterPanel(QWidget):
         self._down_btn = QPushButton("Down")
         self._down_btn.clicked.connect(self._on_move_down)
         order_layout.addWidget(self._down_btn)
+        explain("filters.order", self._up_btn, self._down_btn)
         layout.addLayout(order_layout)
 
         # Per-filter bypass
         self._bypass_btn = QPushButton("Toggle Bypass")
         self._bypass_btn.clicked.connect(self._on_toggle_bypass)
+        explain("filters.bypass", self._bypass_btn)
         layout.addWidget(self._bypass_btn)
 
         layout.addStretch()

@@ -21,6 +21,7 @@ from PySide6.QtWidgets import (
 )
 
 from models import StreamState, ChannelMode
+from .help_text import explain
 from .theme import set_role, set_primary
 
 
@@ -100,6 +101,7 @@ class ControlPanel(QWidget):
         mode_layout.addWidget(self._overlay_radio)
 
         self._mode_button_group.idClicked.connect(self._on_mode_changed)
+        explain("channels.mode", self._single_radio, self._overlay_radio)
 
         layout.addWidget(mode_group)
 
@@ -107,13 +109,15 @@ class ControlPanel(QWidget):
         self._single_group = QGroupBox("Channel Selection")
         single_layout = QHBoxLayout(self._single_group)
 
-        single_layout.addWidget(QLabel("Electrode:"))
+        electrode_label = QLabel("Electrode:")
+        single_layout.addWidget(electrode_label)
         self._channel_spin = NumberSpinBox()
         self._channel_spin.setMinimum(1)
         self._channel_spin.setMaximum(1)
         self._channel_spin.setKeyboardTracking(False)  # "125" is one change, not 1, 12, 125 (each a disk read)
         self._channel_spin.valueChanged.connect(self._on_single_channel_changed)
         single_layout.addWidget(self._channel_spin)
+        explain("channels.electrode", electrode_label, self._channel_spin)
         self._channel_name = QLabel("")
         set_role(self._channel_name, "secondary")
         single_layout.addWidget(self._channel_name)
@@ -127,7 +131,8 @@ class ControlPanel(QWidget):
 
         # Add channel row
         add_row = QHBoxLayout()
-        add_row.addWidget(QLabel("Add:"))
+        add_label = QLabel("Add:")
+        add_row.addWidget(add_label)
         self._add_channel_combo = QComboBox()
         self._add_channel_combo.setMinimumWidth(80)
         add_row.addWidget(self._add_channel_combo)
@@ -148,6 +153,8 @@ class ControlPanel(QWidget):
         self._remove_btn = QPushButton("Remove Selected")
         self._remove_btn.clicked.connect(self._on_remove_channel)
         overlay_layout.addWidget(self._remove_btn)
+        explain("channels.overlay", add_label, self._add_channel_combo, self._add_btn,
+                self._overlay_list, self._remove_btn)
 
         self._overlay_group.setVisible(False)
         layout.addWidget(self._overlay_group)
@@ -158,7 +165,8 @@ class ControlPanel(QWidget):
 
         # Start time
         start_row = QHBoxLayout()
-        start_row.addWidget(QLabel("Start (s):"))
+        start_label = QLabel("Start (s):")
+        start_row.addWidget(start_label)
         self._start_spin = QDoubleSpinBox()
         self._start_spin.setDecimals(3)
         self._start_spin.setMinimum(0)
@@ -166,10 +174,12 @@ class ControlPanel(QWidget):
         self._start_spin.setSingleStep(0.1)
         start_row.addWidget(self._start_spin)
         view_layout.addLayout(start_row)
+        explain("channels.view_start", start_label, self._start_spin)
 
         # End time
         end_row = QHBoxLayout()
-        end_row.addWidget(QLabel("End (s):"))
+        end_label = QLabel("End (s):")
+        end_row.addWidget(end_label)
         self._end_spin = QDoubleSpinBox()
         self._end_spin.setDecimals(3)
         self._end_spin.setMinimum(0)
@@ -177,20 +187,19 @@ class ControlPanel(QWidget):
         self._end_spin.setSingleStep(0.1)
         end_row.addWidget(self._end_spin)
         view_layout.addLayout(end_row)
+        explain("channels.view_end", end_label, self._end_spin)
 
         # Longest span the time plots can show (app-wide, remembered)
         max_row = QHBoxLayout()
-        max_row.addWidget(QLabel("Max length (s):"))
+        max_label = QLabel("Max length (s):")
+        max_row.addWidget(max_label)
         self._max_view_spin = QDoubleSpinBox()
         self._max_view_spin.setDecimals(1)
         self._max_view_spin.setRange(1.0, 3600.0)
         self._max_view_spin.setSingleStep(5.0)
         self._max_view_spin.setValue(20.0)
         self._max_view_spin.setKeyboardTracking(False)
-        self._max_view_spin.setToolTip(
-            "Longest time span the plots can show. Shorter spans load faster when you jump around "
-            "the recording. With CAR/CMR or many overlay channels, memory can limit it further."
-        )
+        explain("channels.max_length", max_label, self._max_view_spin)
         self._max_view_spin.valueChanged.connect(self.max_view_changed.emit)
         max_row.addWidget(self._max_view_spin)
         view_layout.addLayout(max_row)
@@ -204,6 +213,8 @@ class ControlPanel(QWidget):
         self._reset_view_btn = QPushButton("Reset")
         self._reset_view_btn.clicked.connect(self._on_reset_view)
         btn_row.addWidget(self._reset_view_btn)
+        explain("channels.apply_view", self._apply_view_btn)
+        explain("channels.reset_view", self._reset_view_btn)
         view_layout.addLayout(btn_row)
 
         layout.addWidget(view_group)
@@ -214,12 +225,14 @@ class ControlPanel(QWidget):
         self._scatter_check = QCheckBox("Scatter / Dot Mode")
         self._scatter_check.setChecked(False)
         self._scatter_check.stateChanged.connect(self._on_scatter_mode_changed)
+        explain("channels.scatter", self._scatter_check)
         display_layout.addWidget(self._scatter_check)
         layout.addWidget(display_group)
 
         # Refresh button
         self._refresh_btn = QPushButton("Refresh Plot")
         self._refresh_btn.clicked.connect(lambda: self.refresh_requested.emit())
+        explain("channels.refresh", self._refresh_btn)
         layout.addWidget(self._refresh_btn)
 
         layout.addStretch()

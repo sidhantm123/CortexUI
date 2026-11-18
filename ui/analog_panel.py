@@ -28,6 +28,7 @@ from PySide6.QtWidgets import (
 
 from core.app_state import AppState
 from models.analog import AnalogAssignment, DetectionSettings, MODALITY_PRESETS, StimEvent
+from .help_text import explain
 from .theme import set_role, set_primary
 
 NONE_ITEM = "(none)"
@@ -63,17 +64,16 @@ class AssignChannelDialog(QDialog):
         self._modality_combo.addItem(NEW_ITEM)
         self._modality_combo.activated.connect(self._on_modality_activated)
         form.addRow("Modality:", self._modality_combo)
+        explain("assign.modality", self._modality_combo, form.labelForField(self._modality_combo))
 
         self._polarity_combo = QComboBox()
         self._polarity_combo.addItem("Active high (line rises during stim)", False)
         self._polarity_combo.addItem("Active low (line drops during stim)", True)
         form.addRow("Polarity:", self._polarity_combo)
+        explain("assign.polarity", self._polarity_combo, form.labelForField(self._polarity_combo))
 
         thr_row = QHBoxLayout()
         self._auto_thr_check = QCheckBox("Auto")
-        self._auto_thr_check.setToolTip(
-            "Midpoint between the line's idle level and its active level"
-        )
         self._auto_thr_check.toggled.connect(lambda on: self._thr_spin.setEnabled(not on))
         thr_row.addWidget(self._auto_thr_check)
         self._thr_spin = QDoubleSpinBox()
@@ -82,20 +82,21 @@ class AssignChannelDialog(QDialog):
         self._thr_spin.setSuffix(" mV")
         thr_row.addWidget(self._thr_spin)
         form.addRow("Threshold:", thr_row)
+        explain("assign.threshold", self._auto_thr_check, self._thr_spin, form.labelForField(thr_row))
 
         self._gap_spin = QDoubleSpinBox()
         self._gap_spin.setRange(0, 10000)
         self._gap_spin.setDecimals(1)
         self._gap_spin.setSuffix(" ms")
-        self._gap_spin.setToolTip("Crossings closer than this join into one event (pulse trains)")
         form.addRow("Merge gap:", self._gap_spin)
+        explain("assign.merge_gap", self._gap_spin, form.labelForField(self._gap_spin))
 
         self._min_dur_spin = QDoubleSpinBox()
         self._min_dur_spin.setRange(0, 100000)
         self._min_dur_spin.setDecimals(1)
         self._min_dur_spin.setSuffix(" ms")
-        self._min_dur_spin.setToolTip("Events shorter than this are dropped")
         form.addRow("Min duration:", self._min_dur_spin)
+        explain("assign.min_duration", self._min_dur_spin, form.labelForField(self._min_dur_spin))
 
         layout.addLayout(form)
 
@@ -218,12 +219,13 @@ class AnalogPanel(QWidget):
 
         self._sync_check = QCheckBox("Sync X-axes")
         self._sync_check.setChecked(True)
-        self._sync_check.setToolTip("Keep this plot's time axis linked to the main plot")
+        explain("analog.sync", self._sync_check)
         self._sync_check.toggled.connect(self.sync_changed.emit)
         layout.addWidget(self._sync_check)
 
         grid = QGridLayout()
-        grid.addWidget(QLabel("Channel selection:"), 0, 0)
+        channel_label = QLabel("Channel selection:")
+        grid.addWidget(channel_label, 0, 0)
         self._channel_spin = QSpinBox()
         self._channel_spin.setMinimum(1)
         self._channel_spin.setKeyboardTracking(False)  # one load per typed number, not per keystroke
@@ -231,24 +233,28 @@ class AnalogPanel(QWidget):
         grid.addWidget(self._channel_spin, 0, 1)
         self._assign_btn = QPushButton("Assign Channel")
         self._assign_btn.clicked.connect(self._on_assign)
+        explain("analog.channel", channel_label, self._channel_spin)
+        explain("analog.assign", self._assign_btn)
         grid.addWidget(self._assign_btn, 0, 2)
 
         self._channel_label = QLabel("")
         set_role(self._channel_label, "secondary")
         grid.addWidget(self._channel_label, 1, 0, 1, 2)
         self._edit_list_btn = QPushButton("Edit List…")
-        self._edit_list_btn.setToolTip("Choose which channels of this stream are analog inputs")
+        explain("analog.edit_list", self._edit_list_btn)
         self._edit_list_btn.clicked.connect(self._on_edit_list)
         grid.addWidget(self._edit_list_btn, 1, 2)
 
-        grid.addWidget(QLabel("Event selection:"), 2, 0)
+        event_label = QLabel("Event selection:")
+        grid.addWidget(event_label, 2, 0)
         self._event_spin = QSpinBox()
         self._event_spin.setMinimum(1)
         self._event_spin.setKeyboardTracking(False)  # one jump per typed number
         self._event_spin.valueChanged.connect(self._on_event_changed)
         grid.addWidget(self._event_spin, 2, 1)
         self._detect_btn = QPushButton("Detect Events")
-        self._detect_btn.setToolTip("Find events on every assigned channel")
+        explain("analog.event", event_label, self._event_spin)
+        explain("analog.detect", self._detect_btn)
         self._detect_btn.clicked.connect(self.detect_requested.emit)
         set_primary(self._detect_btn)
         grid.addWidget(self._detect_btn, 2, 2)
@@ -265,7 +271,7 @@ class AnalogPanel(QWidget):
             QAbstractItemView.EditTrigger.DoubleClicked
             | QAbstractItemView.EditTrigger.EditKeyPressed
         )
-        self._table.setToolTip("Double-click an onset or offset to edit it")
+        explain("analog.table", self._table)
         self._table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
         self._table.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
         self._table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)

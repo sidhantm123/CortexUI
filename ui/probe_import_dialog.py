@@ -20,6 +20,7 @@ from PySide6.QtWidgets import (
 )
 
 from models.probe import UNWIRED, ProbeContact, ProbeGeometry
+from .help_text import explain
 from .theme import set_role, set_primary
 
 
@@ -234,6 +235,7 @@ class ProbeImportDialog(QDialog):
         browse_btn.clicked.connect(self._on_browse_json)
         pick_row.addWidget(browse_btn)
         layout.addLayout(pick_row)
+        explain("probe.file", self._json_path_edit, browse_btn)
 
         # Info label
         self._json_info = QLabel("")
@@ -270,6 +272,7 @@ class ProbeImportDialog(QDialog):
         layout.addLayout(bar)
 
         layout.addWidget(self._edit_table)
+        explain("probe.table", self._edit_table)
 
         # Hint
         hint = QLabel(f"Ch is the recording channel, 1 = the first channel in the file; {UNWIRED_TEXT} = not connected.")

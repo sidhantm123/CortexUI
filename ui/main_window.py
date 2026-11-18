@@ -62,6 +62,7 @@ from .blanking_panel import BlankingPanel
 from .spike_panel import SpikePanel
 from .raster_plot import RasterPlot
 from .plot_widget import format_volts
+from .help_text import tooltip
 from .theme import MODALITY_COLORS, set_role, set_primary, progress_dialog
 from .toast import Toast, INFO, WARNING, ERROR
 
@@ -187,6 +188,7 @@ class MainWindow(QMainWindow):
         self._recording_gen = 0  # bumped when the recording is replaced or the app quits
 
         self._last_filter_warning = ""  # shown once until it changes
+        self._settings_guide = None  # Help → Settings Guide window, made on first use
 
         self._setup_ui()
         self._setup_menu()
@@ -347,6 +349,7 @@ class MainWindow(QMainWindow):
 
         # View menu
         view_menu = menubar.addMenu("View")
+        view_menu.setToolTipsVisible(True)  # menus hide action tooltips otherwise
 
         reset_view = QAction("Reset View", self)
         reset_view.setShortcut("Ctrl+R")
@@ -358,6 +361,7 @@ class MainWindow(QMainWindow):
         self._show_recording_action = QAction("Show Recording Panel", self, checkable=True)
         self._show_recording_action.setShortcut("Ctrl+1")
         self._show_recording_action.toggled.connect(self._set_recording_panel_visible)
+        self._show_recording_action.setToolTip(tooltip("view.recording_panel"))
         view_menu.addAction(self._show_recording_action)
         self._show_recording_action.setChecked(
             self._settings.value("show_recording_panel", True, type=bool)
@@ -367,6 +371,7 @@ class MainWindow(QMainWindow):
         self._shade_events_action = QAction("Shade Events on Time Series", self, checkable=True)
         self._shade_events_action.setChecked(self._settings.value("shade_events", True, type=bool))
         self._shade_events_action.toggled.connect(self._on_shade_events_toggled)
+        self._shade_events_action.setToolTip(tooltip("view.shade_events"))
         view_menu.addAction(self._shade_events_action)
 
         recording_info = QAction("Recording Info...", self)
@@ -376,11 +381,14 @@ class MainWindow(QMainWindow):
 
         view_menu.addSeparator()
         numbering_menu = view_menu.addMenu("Number Channels By")
+        numbering_menu.setToolTipsVisible(True)
+        numbering_menu.menuAction().setToolTip(tooltip("view.numbering"))
         numbering_group = QActionGroup(self)
         numbering_group.setExclusive(True)
         self._number_by_electrode = QAction("Electrode", self, checkable=True)
-        self._number_by_electrode.setToolTip("Electrode numbers from the channel labels, e.g. elec1-10 → 10")
         self._number_by_channel = QAction("Channel (recording order)", self, checkable=True)
+        for action in (self._number_by_electrode, self._number_by_channel):
+            action.setToolTip(tooltip("view.numbering"))
         for action, mode in (
             (self._number_by_electrode, NUMBER_BY_ELECTRODE),
             (self._number_by_channel, NUMBER_BY_CHANNEL),
@@ -393,6 +401,11 @@ class MainWindow(QMainWindow):
         # Help menu
         help_menu = menubar.addMenu("Help")
 
+        guide_action = QAction("Settings Guide…", self)
+        guide_action.setShortcut(QKeySequence.StandardKey.HelpContents)
+        guide_action.triggered.connect(self._on_settings_guide)
+        help_menu.addAction(guide_action)
+
         shortcuts_action = QAction("Keyboard Shortcuts", self)
         shortcuts_action.triggered.connect(self._on_show_shortcuts)
         help_menu.addAction(shortcuts_action)
@@ -400,6 +413,16 @@ class MainWindow(QMainWindow):
         about_action = QAction("About", self)
         about_action.triggered.connect(self._on_about)
         help_menu.addAction(about_action)
+
+    def _on_settings_guide(self):
+        """Help → Settings Guide: every setting explained, searchable (non-modal, one window)."""
+        from .settings_guide import SettingsGuide
+
+        if self._settings_guide is None:
+            self._settings_guide = SettingsGuide(self)
+        self._settings_guide.show()
+        self._settings_guide.raise_()
+        self._settings_guide.activateWindow()
 
     def _update_numbering_actions(self):
         """Check the active numbering; grey out Electrode when this stream's labels don't allow it."""

@@ -25,6 +25,7 @@ from PySide6.QtWidgets import (
 
 from core.app_state import AppState
 from models.blanking import BASIC, ADVANCED, LINEAR, CUBIC, BlankingSettings
+from .help_text import explain, tooltip
 from .theme import set_role, set_primary
 
 
@@ -64,6 +65,8 @@ class ModalityBlankingPage(QWidget):
         self._mode_tabs.addTab(self._make_basic(), "Basic")
         self._mode_tabs.addTab(self._make_advanced(), "Advanced")
         self._mode_tabs.currentChanged.connect(self._on_changed)
+        for i in range(self._mode_tabs.count()):
+            self._mode_tabs.setTabToolTip(i, tooltip("blanking.mode"))
         layout.addWidget(self._mode_tabs, 1)
 
         self._status_label = QLabel("")
@@ -80,6 +83,7 @@ class ModalityBlankingPage(QWidget):
         self._remove_btn.clicked.connect(lambda: self.remove_requested.emit(self._modality))
         buttons.addWidget(self._remove_btn)
         layout.addLayout(buttons)
+        explain("blanking.apply", self._apply_btn, self._remove_btn)
 
     def _make_basic(self) -> QWidget:
         page = QWidget()
@@ -87,13 +91,13 @@ class ModalityBlankingPage(QWidget):
         group = QGroupBox("Padding")
         form = QFormLayout(group)
         self._pre_spin = _spin(0, 10000, 1, " ms")
-        self._pre_spin.setToolTip("Blank this long before each event's onset")
         self._pre_spin.valueChanged.connect(self._on_changed)
         form.addRow("Pre-stim pad:", self._pre_spin)
         self._post_spin = _spin(0, 60000, 1, " ms", 10)
-        self._post_spin.setToolTip("Blank this long after each event's offset")
         self._post_spin.valueChanged.connect(self._on_changed)
         form.addRow("Post-stim pad:", self._post_spin)
+        explain("blanking.pre", self._pre_spin, form.labelForField(self._pre_spin))
+        explain("blanking.post", self._post_spin, form.labelForField(self._post_spin))
         layout.addWidget(group)
         note = QLabel("Every trial and every electrode is blanked, then filled by linear interpolation.")
         note.setWordWrap(True)
@@ -108,9 +112,9 @@ class ModalityBlankingPage(QWidget):
 
         pad_form = QFormLayout()
         self._adv_pre_spin = _spin(0, 10000, 1, " ms")
-        self._adv_pre_spin.setToolTip("Blank this long before each event's onset")
         self._adv_pre_spin.valueChanged.connect(self._on_changed)
         pad_form.addRow("Pre-stim pad:", self._adv_pre_spin)
+        explain("blanking.pre", self._adv_pre_spin, pad_form.labelForField(self._adv_pre_spin))
         layout.addLayout(pad_form)
 
         group = QGroupBox("Adaptive Pad")
@@ -123,7 +127,6 @@ class ModalityBlankingPage(QWidget):
         self._n_windows_spin.valueChanged.connect(self._on_changed)
         form.addRow("Num windows:", self._n_windows_spin)
         self._mult_spin = _spin(0.1, 100, 2, " ×", 0.05)
-        self._mult_spin.setToolTip("A window is quiet when its spike-band RMS is below this × the channel's baseline RMS")
         self._mult_spin.valueChanged.connect(self._on_changed)
         form.addRow("Vrms multiple:", self._mult_spin)
         self._min_post_spin = _spin(0, 60000, 0, " ms", 50)
@@ -132,6 +135,10 @@ class ModalityBlankingPage(QWidget):
         self._max_post_spin = _spin(1, 60000, 0, " ms", 100)
         self._max_post_spin.valueChanged.connect(self._on_changed)
         form.addRow("Max post-pad:", self._max_post_spin)
+        for key, field in (("blanking.window", self._window_spin), ("blanking.n_windows", self._n_windows_spin),
+                           ("blanking.multiplier", self._mult_spin), ("blanking.min_post", self._min_post_spin),
+                           ("blanking.max_post", self._max_post_spin)):
+            explain(key, field, form.labelForField(field))
         self._rule_label = QLabel("")
         self._rule_label.setWordWrap(True)
         set_role(self._rule_label, "secondary")
@@ -139,7 +146,8 @@ class ModalityBlankingPage(QWidget):
         layout.addWidget(group)
 
         trials_row = QHBoxLayout()
-        trials_row.addWidget(QLabel("Choose Trials"))
+        trials_label = QLabel("Choose Trials")
+        trials_row.addWidget(trials_label)
         trials_row.addStretch()
         self._all_trials_check = QCheckBox("Blank All Trials")
         self._all_trials_check.toggled.connect(self._on_all_trials)
@@ -154,9 +162,11 @@ class ModalityBlankingPage(QWidget):
         self._trials_table.setMinimumHeight(110)
         self._trials_table.itemChanged.connect(self._on_trial_toggled)
         layout.addWidget(self._trials_table, 1)
+        explain("blanking.trials", trials_label, self._all_trials_check, self._trials_table)
 
         interp_row = QHBoxLayout()
-        interp_row.addWidget(QLabel("Interpolation:"))
+        interp_label = QLabel("Interpolation:")
+        interp_row.addWidget(interp_label)
         self._interp_group = QButtonGroup(self)
         self._linear_radio = QRadioButton("Linear")
         self._cubic_radio = QRadioButton("Cubic")
@@ -165,6 +175,7 @@ class ModalityBlankingPage(QWidget):
             interp_row.addWidget(radio)
         interp_row.addStretch()
         self._interp_group.idClicked.connect(self._on_changed)
+        explain("blanking.interpolation", interp_label, self._linear_radio, self._cubic_radio)
         layout.addLayout(interp_row)
         return page
 

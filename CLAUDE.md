@@ -10,50 +10,23 @@ delete details that the code or git history already records.
 
 | | |
 |---|---|
-| Active branch | `NSP_Basic` (pushed 2026-11-18, PR into `main`; branched from `main` @ `beb2da4`) |
-| Last commit | `fd3a3b2` Deselect CAR/CMR electrodes by dragging; add Deselect All |
-| Tests | 196 passing: `tdtgui/bin/python -m unittest discover tests` |
-| Next step | User tests the plot-edge fix and CAR/CMR deselection |
+| Active branch | `feature/settings-help` (from `main` @ `b7e61fc`, after PR #4 merged `NSP_Basic`) |
+| Last commit | `6bc089f` Explain every editable setting: tooltips and a Settings Guide |
+| Tests | 200 passing: `tdtgui/bin/python -m unittest discover tests` |
+| Next step | PR `feature/settings-help`; then package CortexUI v1.0 (plan approved 2026-11-18: name CortexUI, generated icon, `.dmg` + Windows `.zip` via GitHub Actions, draft release) |
 
 ### Done
-1. Analog input viewer and event detection (`78664d0`).
-2. Editable event onset/offset, by table cell or by dragging the line on the analog plot (`7b559ef`).
-3. Blanking tab (`e60ac42`): Basic (fixed pads) and Advanced (adaptive per-channel post-pad), Apply/Remove, applied before filters
-   everywhere, saved in the session.
-4. (`de192d3`) Vrms is computed on the visible data with blanked samples excluded, and shown in the Time Series plot's top-right
-   corner (moved out of the Channels panel). The zeroing Vrms-threshold filter is removed; old sessions drop it with a
-   message (`REMOVED_FILTER_TYPES`).
-5. (`3507af0`) Export at any stage: Apply blanking / Apply filter chain checkboxes; chunked full-recording export (`core/export.py`,
-   `ExportWorker`); "current view" now exports exactly the view (it used to write the ~3× buffer).
-6. (`50a7747`) Electrode numbering app-wide by default; View → Number Channels By → Electrode / Channel (saved in
-   QSettings).
-7. (`8722e70`) Export dialog: typed channel selection (`ui/channel_spec.py`, in the active numbering, written ascending) with All
-   Channels / Displayed buttons and a live preview, plus a warning when the applied blanking is stale.
-8. (`4b8836b`) Step 4a, Spike Detection tab:
-   - k·σ threshold (σ = median(|x|)/0.6745 in view, blanked samples excluded), polarity, refractory.
-   - A draggable threshold line (Single mode). The user then asked to remove the trace markers and the info line, and
-     the label was renamed "Threshold (k × σ)": σ is not Vrms.
-   - Hints for a missing HP/BP filter and short views.
-9. (`96b62ac`) Step 4b:
-   - Detect Spikes runs over the whole recording, with σ frozen from the view.
-   - It uses the shared chunk pipeline `core.export.iter_processed_chunks`, and the results feed the Raster tab.
-   - Channel filtering is parallelised.
-10. (`ec903d7`) UI-1:
-    - Dark theme (`ui/theme.py`) on all plots: faint grid, no axis box, monospace ticks.
-    - µV/mV axes, done by scaling tick labels only.
-    - One font policy, text roles in place of inline styles, accent-filled primary buttons.
-11. (`9c7f5fc`) Accent changed to `#CC79A7` (user), with dark text on accent fills for contrast. Thin 4 px progress bars
-    via `theme.progress_dialog`, with the percentage in the dialog text. Analog "Sync to Raw Data Viewer" renamed
-    "Sync X-axes".
-12. (`7aa02ad`) UI-2:
-    - A Time Series header: the title (`Elec 10 · Ch 125 · elec1-10` / `N electrodes`), blanking/filter chips (amber
-      when stale or bypassed) and an RMS chip, replacing the corner TextItem.
-    - The left panel can be hidden with View → Show Recording Panel (⌘1). A compact "recording card" was tried; the user
-      asked for the original Block Info + Streams table layout back, restyled: middle-elided name, secondary details,
-      monospace right-aligned numbers, and a minimum width of 225 px so the column headers fit.
-    - The status bar is removed; messages go to a `Toast` (`ui/toast.py`).
-    - Empty-state hints, keyboard shortcuts, and control tabs wrapped in scroll areas so they never squash at
-      1200×800.
+1. Analog events (`78664d0`), editable onset/offset (`7b559ef`), Blanking tab Basic/Advanced (`e60ac42`).
+4. (`de192d3`) Vrms on the visible data, blanked samples excluded, in the plot header; the Vrms-threshold filter removed
+   (old sessions drop it with a message, `REMOVED_FILTER_TYPES`).
+5. (`3507af0`, `8722e70`) Export at any stage, chunked; typed channel selection (`ui/channel_spec.py`) with a preview
+   and a stale-blanking warning.
+6. (`50a7747`) Electrode numbering app-wide; View → Number Channels By (QSettings).
+8. (`4b8836b`, `96b62ac`) Spike Detection: k·σ line (Single mode; no markers/info line, at the user's request), Detect
+   Spikes over the whole recording with σ frozen from the view, Raster tab.
+10. (`ec903d7`, `9c7f5fc`, `7aa02ad`) UI: dark theme, µV/mV tick scaling, text roles, accent `#CC79A7` (user), thin
+    progress bars, Time Series header (title, chips, RMS), hideable recording panel (the user kept the Block Info +
+    Streams layout), toasts instead of a status bar, shortcuts, scrollable control tabs.
 13. (`b332ee8`) Audit step 1 (filter chain + CAR memory):
     - **Bug:** any SOS filter placed *before* CAR/CMR was silently dropped (SOS ran on the displayed rows, CAR on the
       raw all-channel array, which then overwrote them). The chain now runs in order on the all-channel array.
@@ -155,6 +128,9 @@ delete details that the code or git history already records.
 31. (`fd3a3b2`) CAR/CMR deselection (user request): a drag that starts on an electrode that already has the selected brush
     removes the brush from the electrodes in the run (other subgroups' left alone); elsewhere drags assign as
     before. **Deselect All** (status line) clears every electrode, exclusions included; the subgroups stay.
+32. (`6bc089f`) Every editable setting explained (user request): `ui/help_text.py` holds one entry per setting (74; title,
+    text, default) used for the tooltips (`explain(key, field, label)`) and **Help → Settings Guide** (F1;
+    non-modal, searchable). `tests/test_help.py` fails on any editable control without a tooltip.
 
 ### Branches
 - **`main`:** the TDT/Blackrock viewer with filters, FFT/PSD, probe map, export and `.ccf` info.
@@ -414,6 +390,8 @@ tests/                unittest; test_blackrock.py has write_nsx_23() to build sy
   - Report progress with `progress_bar().setValue`, **never `QProgressDialog.setValue`** (it processes events for a
     modal dialog: a result handled inside it can close/delete the dialog under it → crash).
   - Anything that replaces the recording calls `_stop_jobs()` (bumps `_recording_gen`, cancels every job).
+- **Every editable setting gets a `HELP` entry** (`ui/help_text.py`, in `SECTIONS`) and `explain(key, field,
+  label)`; check the text against the code (defaults, units). `tests/test_help.py` enforces the tooltips.
 - Don't rebuild a widget from inside its own signal (table `itemChanged`, line `sigPositionChangeFinished`); defer with
   `QTimer.singleShot(0, ...)`.
 - Write commit messages in the imperative. **No Co-Authored-By or any other Claude attribution** (user rule,
@@ -426,7 +404,7 @@ tests/                unittest; test_blackrock.py has write_nsx_23() to build sy
 ### Audit fixes (approved 2026-11-17): all 11 steps done (§1 items 13, 14, 16–24)
 Untested for lack of data: TDT `.sev` stores, a real TDT block, a lab probeinterface file.
 
-### Spike Detection tab: done (§1 items 8–9); still to come: waveform snippets (overlaid ~2 ms cut-outs)
+### Spike Detection tab: done (§1 item 8); still to come: waveform snippets (overlaid ~2 ms cut-outs)
 
 ### Later / unscheduled
 - **Probe map takes priority (user request, 2026-10-27):** once probe-map import is fully built out, a loaded probe map
