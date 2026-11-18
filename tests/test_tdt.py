@@ -1,6 +1,5 @@
 """TDT reader on synthetic blocks (a .tsq index and .tev data written to the format tdt reads)."""
 import os
-import shutil
 import sys
 import tempfile
 import unittest
@@ -9,6 +8,8 @@ import warnings
 import numpy as np
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+from tests import remove_dir  # noqa: E402
 
 from tdt_io.tdt_reader import TDT_AVAILABLE, TDTReader
 
@@ -64,7 +65,7 @@ class TestTDTReader(unittest.TestCase):
 
     @classmethod
     def tearDownClass(cls):
-        shutil.rmtree(cls.tmp)
+        remove_dir(cls.tmp)
 
     def test_synthetic_block_matches_tdt_itself(self):
         import tdt

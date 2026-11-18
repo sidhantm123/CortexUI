@@ -10,10 +10,10 @@ delete details that the code or git history already records.
 
 | | |
 |---|---|
-| Active branch | `feature/settings-help` (from `main` @ `b7e61fc`, after PR #4 merged `NSP_Basic`) |
-| Last commit | `6bc089f` Explain every editable setting: tooltips and a Settings Guide |
-| Tests | 200 passing: `tdtgui/bin/python -m unittest discover tests` |
-| Next step | PR `feature/settings-help`; then package CortexUI v1.0 (plan approved 2026-11-18: name CortexUI, generated icon, `.dmg` + Windows `.zip` via GitHub Actions, draft release) |
+| Active branch | `release/v1.0` (from `main` @ `cb5b2dc`, after PR #5 merged the settings help) |
+| Last commit | The user's logo (`assets/logo.png`) as the app icon |
+| Tests | 202 passing: `tdtgui/bin/python -m tests` (exit code 0 checked) |
+| Next step | PR `release/v1.0` → `main` (CI green); after the merge, tag `v1.0.0` with the user's OK (§4) |
 
 ### Done
 1. Analog events (`78664d0`), editable onset/offset (`7b559ef`), Blanking tab Basic/Advanced (`e60ac42`).
@@ -60,46 +60,17 @@ delete details that the code or git history already records.
     (0–10 % of Detect Spikes). The chunk pipeline frees each chunk before reading the next (two were alive at
     once). RP01, 128 ch, BP 250–5000: 20 s view + CAR peak 2.75 → 1.11 GB numpy, 10 s BP 0.87 → 0.61 GB; σ
     identical to 1e-7.
-18. (`7899b48`) Audit step 5 (render path): a fully blanked view (NaN RMS) with a probe map loaded made the probe map raise,
-    which discarded every load in that view (frozen trace, "Could not process" toast); NaN is now "no data" and
-    the probe map updates after the trace. Blank shading reuses its items and skips unchanged spans; analog
-    markers and raster bands rebuild only when the events in view change; the probe map doesn't rebuild while
-    hidden. Min/max decimation now draws the last samples of a view. Rerender 13 → 8 ms (18 → 8 ms with the
-    probe tab shown); what remains of a pan step is pyqtgraph painting the axes.
-19. (`3e49243`) Audit step 6 (failed Open / session): `AppState.load_block` opens the new recording before closing the old
-    one, so a failed Open changes nothing (it used to empty the state under the old panels); the probe is kept
-    across recordings, as the UI already showed. `load_session` parses the whole file before opening the
-    recording; unknown or invalid saved filters are skipped with a `load_messages` note (one used to abort the
-    session). `save_session` writes a `.tmp` file and renames it.
-20. (`7658f42`) Audit step 7 (events / assignments): unassigning a line or moving it to another modality drops its events
-    (`AppState._drop_events`); a modality's blanking result goes with its last event (its tab disappears) and is
-    marked stale otherwise; `assignments_changed(bool)` re-processes when blanking went. Analog-list edits also
-    take new analog channels out of CAR/CMR groups and refresh the Blanking tab. Excluded trials follow their
-    events through renumbering (`_renumber`); "nan"/"inf" in an event cell is rejected (`round(nan)` raised).
-21. (`97d2973`) Audit step 8 (Analyze): `SpectralWorker` reads through `iter_processed_chunks` (blanking, filters, CAR/CMR
-    with all channels: CAR used to be skipped silently) and runs via `_run_job("analysis")` with Cancel.
-    Intervals are validated and capped at `MAX_ANALYSIS_SAMPLES` (3e7: 8 ch → 125 s). The pipeline collects
-    filter warnings (`warnings=` list). RP01 8 ch × 60 s BP+CAR PSD: 5.6 s, GUI stalls ≤ 37 ms.
-22. (`7cb3027`) Audit step 9 (small fixes): `elec…`/`chan…` labels are neural whatever their ID; probe Table Editor works
-    (Add Row passed `clicked(bool)`; OK follows the tab); event lines preallocated (RP01 3 lines 0.70 → 0.58
-    GB); window shown before `splash.finish` (−1.0 s at startup); `main.install_error_log` (error.log in
-    AppDataLocation + one message per error); Blackrock `_sample_index` (`int(n/fs*fs)` < n for 1–7 % of n);
-    FFT amplitude divides by the window sum (Hann read ×0.5); σ = 0 → NaN; export summary / spike detection /
-    analysis report filter warnings; an unreadable `.ccf`/`.nsX` is skipped with `metadata["notes"]` (neo
-    parsed every `.nsX` of a recording, so one damaged file blocked all: `_only_nsx`); names escaped in rich
-    text; the filter dialog validates CAR/CMR on OK; `FilterWorker`/`DecimationWorker` deleted.
-23. (`4ef4e41`) Audit step 10 (TDT): **TDT viewing was broken** with numpy 2 (pinned 2.4.1): tdt 0.7.3's windowed stream
-    reads compute `np.arange(np.uint16(nchan), 0, -1)` and uint64 differences that wrap, so every window of a
-    multi-channel store not starting at 0 s came back empty. `TDTReader` now parses the `.tsq` once
-    (`headers=1`) and reads `.tev` records itself (`_TevStream`: per-channel byte offsets, `npts` samples per
-    record) at exact `floor(t*fs + 1e-6)` indices; nothing is cached (it used to keep the whole block in RAM
-    and re-parse the `.tsq` on every read). Stores in `.sev` files still go through tdt (reused headers,
-    t1 a quarter sample early for its `ceil`, trimmed): **untested, no `.sev` data**. Tested on synthetic
-    blocks (`tests/test_tdt.py` writes `.tsq`/`.tev` that tdt itself reads back exactly).
-24. (`4dbb788`) Audit step 11 (probe indices): probeinterface `device_channel_indices` are read 0-based (they were taken as
-    1-based, shifting every contact by one channel); −1 = not connected (`models.probe.UNWIRED`: drawn grey, left
-    out of shank groups and selection, "–" in the Table Editor). Sessions write `probe_index_base: 0`; older ones
-    (no key, saved as channel + 1) still load. **Not checked against a lab probe file.**
+18–22. Audit steps 5–9 (`7899b48` render path: NaN RMS no longer freezes the trace, blank/event items reused; `3e49243`
+    failed Open/session change nothing, `.tmp` + rename saves; `7658f42` unassigning a line drops its events, trials
+    follow renumbering; `97d2973` Analyze through `iter_processed_chunks` with CAR, capped at `MAX_ANALYSIS_SAMPLES`;
+    `7cb3027` small fixes: `_sample_index`, FFT window-sum amplitude, σ = 0 → NaN, `install_error_log`, `_only_nsx`).
+23. (`4ef4e41`) Audit step 10 (TDT): **TDT viewing was broken** with numpy 2 (tdt 0.7.3's windowed reads wrap uint
+    arithmetic). `TDTReader` parses the `.tsq` once (`headers=1`) and reads `.tev` records itself (`_TevStream`) at
+    `floor(t*fs + 1e-6)`; `.sev` stores still go through tdt (t1 a quarter sample early): **untested, no `.sev`
+    data**. `tests/test_tdt.py` writes synthetic `.tsq`/`.tev` that tdt itself reads back exactly.
+24. (`4dbb788`) Audit step 11 (probe indices): `device_channel_indices` are 0-based (were taken as 1-based); −1 =
+    not connected (`models.probe.UNWIRED`). Sessions write `probe_index_base: 0`; older ones still load. **Not
+    checked against a lab probe file.**
 25. (`ece5a7a`) CAR/CMR group dialog (user request): press and drag selects every electrode between the press and the cursor
     in reading order (`_ChannelGrid`: buttons are mouse-transparent, the nearest button centre wins, auto-scroll
     past the visible rows); drags add up; the selected subgroup takes electrodes over; an **Exclude** brush leaves
@@ -131,10 +102,29 @@ delete details that the code or git history already records.
 32. (`6bc089f`) Every editable setting explained (user request): `ui/help_text.py` holds one entry per setting (74; title,
     text, default) used for the tooltips (`explain(key, field, label)`) and **Help → Settings Guide** (F1;
     non-modal, searchable). `tests/test_help.py` fails on any editable control without a tooltip.
+33. (`1c8e821`) Packaging step 1: the app is **CortexUI** (`version.py`: `APP_NAME`, `APP_VERSION`, `APP_URL`; title, splash,
+    About). No organization name, so `error.log` is in `~/Library/Application Support/CortexUI/` (`%APPDATA%\CortexUI`);
+    `QSettings("NSP", "MultiChannelNeuralViewer")` is kept on purpose (saved preferences carry over).
+    `main.py --smoke-test FOLDER` opens the folder in the real window and exits 0 once the first processed buffer
+    is in, or 1 on an error box, error toast, uncaught exception or 60 s; it prints the result, or (no console:
+    the windowed Windows app) writes a failure to `error.log`. `tests/test_smoke.py` runs it in a subprocess.
+34. (`2bec03c`) Packaging step 2: `packaging/make_icons.py` makes the icons from the **user's logo**
+    `assets/logo.png` (pink action potential on near-black, 1254 px; replaced the drawn icon after step 4) as a
+    rounded tile: `assets/icon.png`, `.ico` (PNG entries, no Pillow), `.icns` (iconutil, Apple's 824/1024 grid).
+    Below 128 px the line is dilated to ≥ 1.6 px (it faded at 16–32 px). Window icon outside macOS. `cortexui.spec` (replaces `tdt_viewer.spec`; `upx=False`, `h5py` excluded,
+    `LSMinimumSystemVersion` 14.0) and `packaging/make_dmg.sh` (ditto + Applications link, hdiutil UDZO, retries).
+    Local Intel build: 181 MB app, 87 MB `.dmg`, ad-hoc signed, smoke test OK on RP01 (5 s warm, ~40 s first run).
+35. (`a237f04`, fixes `f80f111` `71a5723` `e3b3191`) Packaging step 3: `.github/workflows/release.yml` + release notes.
+    The first CI runs found: Windows can't delete a still-mapped `.nsX` (`tests.remove_dir`), and **the test process
+    crashed at exit after "OK" on every platform** (see Conventions: exit via `os._exit`, `python -m tests`). Job
+    logs need admin rights, so failures go to public annotations (`packaging/ci_annotate.py`). First green run
+    44378241396 (6 min): artifacts Apple Silicon 73.6 MB, Intel 81.9 MB, Windows 103 MB.
+36. Packaging step 4: README Download section (`…/releases/latest`), how to make a release, macOS first-launch help.
 
-### Branches
-- **`main`:** the TDT/Blackrock viewer with filters, FFT/PSD, probe map, export and `.ccf` info.
-- **`NSP_Basic`:** the current work, a step-by-step rebuild that follows the user's mockup.
+### Branches and repo
+- **Repo:** `github.com/sidhantm123/CortexUI` (public; renamed from `tdtgui` on 2026-11-19, old URLs redirect).
+- **`main`:** everything so far (PR #4 merged `NSP_Basic`, PR #5 the settings help). New work branches from it.
+- **`release/v1.0`:** packaging (§4).
 - **`nsp_pipeline`:** a **local archive only, never merge it**. It held an elaborate NSP preprocessing pipeline the user dropped
   as "too complicated". Its `nsp_pipeline/events.py` helpers were reused in `dsp/events.py`.
 
@@ -166,7 +156,7 @@ delete details that the code or git history already records.
 ## 3. Architecture
 
 ```
-main.py               entry point
+main.py               entry point (`--smoke-test FOLDER` checks a build);  version.py  app name + version
 core/app_state.py     AppState: reader, block, per-stream StreamState, analog assignments, events, session JSON
 core/workers.py       QRunnable workers (data load, filter, spectral, EventDetectWorker) + WorkerManager
 core/reader_factory.py  open_reader(folder) -> TDTReader | BlackrockReader
@@ -392,6 +382,13 @@ tests/                unittest; test_blackrock.py has write_nsx_23() to build sy
   - Anything that replaces the recording calls `_stop_jobs()` (bumps `_recording_gen`, cancels every job).
 - **Every editable setting gets a `HELP` entry** (`ui/help_text.py`, in `SECTIONS`) and `explain(key, field,
   label)`; check the text against the code (defaults, units). `tests/test_help.py` enforces the tooltips.
+- **Exit via `os._exit`** (end of `main.main`, `tests/__main__.py`): PySide's teardown at interpreter exit destroys
+  Qt objects in no set order; freeing a pyqtgraph item can free a lambda holding the last reference to its own
+  plot, which deletes the item again → crash after everything finished (SIGILL macOS, heap corruption Windows;
+  `python -m unittest discover` exited 132 after "OK" since long before v1.0). Explicitly deleting pyqtgraph
+  widgets (`shiboken6.delete`) crashed too (QGraphicsGridLayout wrapper). Anything that must persist is saved
+  before (`QSettings.sync()`); `closeEvent` stops jobs. Run tests with `python -m tests`, never trust "OK" alone.
+- Tests delete temp folders with `tests.remove_dir` (Windows can't delete a still-mapped `.nsX`).
 - Don't rebuild a widget from inside its own signal (table `itemChanged`, line `sigPositionChangeFinished`); defer with
   `QTimer.singleShot(0, ...)`.
 - Write commit messages in the imperative. **No Co-Authored-By or any other Claude attribution** (user rule,
@@ -400,6 +397,10 @@ tests/                unittest; test_blackrock.py has write_nsx_23() to build sy
 ---
 
 ## 4. Roadmap
+
+### Package and release CortexUI v1.0 (approved 2026-11-18): steps 1–4 done (§1 items 33–36)
+Left: PR `release/v1.0` → `main` (CI green on all three), then, with the user's OK at that moment, `git tag v1.0.0`
+on `main` and push it; the workflow makes a draft release; the user tries the files and publishes it.
 
 ### Audit fixes (approved 2026-11-17): all 11 steps done (§1 items 13, 14, 16–24)
 Untested for lack of data: TDT `.sev` stores, a real TDT block, a lab probeinterface file.
@@ -455,11 +456,17 @@ Untested for lack of data: TDT `.sev` stores, a real TDT block, a lab probeinter
 
 ## 6. Environment
 
-- **Venv:** `tdtgui/` inside the repo. It was rebuilt after the repo moved from `~/Desktop/GUI`.
+- **Venv:** `tdtgui/` inside the repo (untracked; the README tells new setups to use `.venv`).
 - **Run:** `tdtgui/bin/python main.py`.
 - **Requirements:**
   - `requirements.txt` pins PySide6 6.10, pyqtgraph 0.14, neo 0.14.5, scipy, numpy and tdt.
   - `h5py` is installed in the venv but not required.
 - **Headless UI checks:** `QT_QPA_PLATFORM=offscreen`, then `w.grab().save(...)` for screenshots.
 - **Tools:** `gh` is not installed; the user merges PRs on GitHub.
+- **Packaging:** `pyinstaller --clean --noconfirm cortexui.spec`, `packaging/make_dmg.sh`, `packaging/make_icons.py`;
+  `QT_QPA_PLATFORM=offscreen dist/CortexUI.app/Contents/MacOS/CortexUI --smoke-test FOLDER`. Minimum macOS 14
+  (numpy/scipy wheels). Release files come from the CI only (this Mac's Homebrew Python bundles libs for macOS 26).
+- **CI status without signing in:** the anonymous API allows 60 requests/hour (poll ≥ 2 min; `ci_watch`-style
+  monitors used it up); annotations are public (`/check-runs/<job>/annotations`); the run's web page
+  (`github.com/sidhantm123/CortexUI/actions/runs/<id>`) is not rate-limited.
 - **Machine:** 8 GB RAM. Avoid holding whole-file arrays of all channels.

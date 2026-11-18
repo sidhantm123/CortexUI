@@ -7,6 +7,8 @@ import numpy as np
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
+from tests import remove_dir  # noqa: E402
+
 from dsp.blanking import (
     apply_blanking, adaptive_end_windows, basic_result, blank_mask, blank_spans, clean_windows, window_rms,
 )
@@ -124,7 +126,7 @@ class TestIntervals(unittest.TestCase):
 class TestOldSessionFilters(unittest.TestCase):
 
     def test_vrms_threshold_filter_dropped_on_load(self):
-        import tempfile, shutil
+        import tempfile
         from tests.test_blackrock import write_nsx_23
         tmp = tempfile.mkdtemp()
         try:
@@ -148,7 +150,7 @@ class TestOldSessionFilters(unittest.TestCase):
             self.assertEqual([f.filter_type.value for f in filters], ["highpass"])
             self.assertEqual(len(restored.load_messages), 1)
         finally:
-            shutil.rmtree(tmp)
+            remove_dir(tmp)
 
 
 class TestBlankingState(unittest.TestCase):

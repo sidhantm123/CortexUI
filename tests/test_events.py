@@ -2,12 +2,13 @@
 import sys
 import os
 import json
-import shutil
 import tempfile
 import unittest
 import numpy as np
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+from tests import remove_dir  # noqa: E402
 
 from dsp.events import auto_threshold, detect_line_events, find_trains
 from models import StreamState, DetectionSettings, AnalogAssignment, StimEvent
@@ -142,7 +143,7 @@ class TestSessionRoundTrip(unittest.TestCase):
         self.tmp = tempfile.mkdtemp()
 
     def tearDown(self):
-        shutil.rmtree(self.tmp)
+        remove_dir(self.tmp)
 
     def test_assignments_and_events_saved(self):
         from tests.test_blackrock import write_nsx_23

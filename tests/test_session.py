@@ -1,7 +1,6 @@
 """Opening recordings and sessions: a failure leaves the current state untouched."""
 import json
 import os
-import shutil
 import sys
 import tempfile
 import unittest
@@ -9,6 +8,8 @@ import unittest
 import numpy as np
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+from tests import remove_dir  # noqa: E402
 
 from blackrock_io.blackrock_reader import NEO_AVAILABLE
 from core.app_state import AppState
@@ -33,7 +34,7 @@ class TestAtomicLoads(unittest.TestCase):
         self.session = os.path.join(self.tmp, "s.json")
 
     def tearDown(self):
-        shutil.rmtree(self.tmp)
+        remove_dir(self.tmp)
 
     def _unchanged(self, block, reader):
         self.assertIs(self.app.block, block)

@@ -1,6 +1,5 @@
 """Tests for the sliding plot buffer (core/view_buffer.py) and the direct Blackrock reads it relies on."""
 import os
-import shutil
 import sys
 import tempfile
 import unittest
@@ -8,6 +7,8 @@ import unittest
 import numpy as np
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+from tests import remove_dir  # noqa: E402
 
 from blackrock_io import BlackrockReader
 from blackrock_io.blackrock_reader import NEO_AVAILABLE
@@ -86,7 +87,7 @@ class TestBufferLoads(unittest.TestCase):
 
     @classmethod
     def tearDownClass(cls):
-        shutil.rmtree(cls.tmp)
+        remove_dir(cls.tmp)
 
     def _run(self, worker):
         out = {}

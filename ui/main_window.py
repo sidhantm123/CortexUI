@@ -49,6 +49,7 @@ from dsp.metrics import compute_vrms
 from dsp.spikes import robust_sigma, NEGATIVE, POSITIVE, BOTH
 from models.blanking import ADVANCED
 from models.filter_config import FilterType
+from version import APP_NAME, APP_URL, APP_VERSION
 
 from .stream_panel import StreamPanel
 from .control_panel import ControlPanel
@@ -125,7 +126,7 @@ class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
 
-        self.setWindowTitle("Multi-Channel Neural Viewer")
+        self.setWindowTitle(APP_NAME)
         self.setMinimumSize(1200, 800)
 
         # App-wide channel numbering preference (electrode numbers by default)
@@ -2154,18 +2155,19 @@ class MainWindow(QMainWindow):
         """Show about dialog."""
         QMessageBox.about(
             self,
-            "About Multi-Channel Neural Viewer",
-            "<h3>Multi-Channel Neural Viewer</h3>"
-            "<p>Version 1.0.0</p>"
-            "<p>A cross-platform application for viewing and analyzing "
-            "Tucker-Davis Technologies and Blackrock Neurotech neural recording data.</p>"
-            "<p>Features:</p>"
+            f"About {APP_NAME}",
+            f"<h3>{APP_NAME} {APP_VERSION}</h3>"
+            "<p>Multi-channel neural recording viewer for Tucker-Davis Technologies (TDT) and "
+            "Blackrock Neurotech recordings, on macOS and Windows.</p>"
             "<ul>"
-            "<li>Multi-channel time series visualization</li>"
-            "<li>Configurable filter chains</li>"
-            "<li>FFT and PSD analysis</li>"
-            "<li>Session save/load</li>"
-            "</ul>",
+            "<li>Time series of single or overlaid electrodes, with live RMS</li>"
+            "<li>Stimulation events from analog inputs, and artifact blanking</li>"
+            "<li>Filter chains with CAR/CMR</li>"
+            "<li>Spike detection and raster</li>"
+            "<li>FFT and PSD, probe map, binary export, sessions</li>"
+            "</ul>"
+            "<p>Help → Settings Guide explains every setting.</p>"
+            f"<p><a href='{APP_URL}'>{APP_URL.removeprefix('https://')}</a></p>",
         )
 
     def _on_load_probe(self):

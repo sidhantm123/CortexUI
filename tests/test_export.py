@@ -1,12 +1,13 @@
 """Tests for chunked int16 binary export."""
 import sys
 import os
-import shutil
 import tempfile
 import unittest
 import numpy as np
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+from tests import remove_dir  # noqa: E402
 
 from blackrock_io import BlackrockReader
 from core.export import export_binary, chunk_bounds, blank_sample_spans
@@ -39,7 +40,7 @@ class TestExport(unittest.TestCase):
 
     @classmethod
     def tearDownClass(cls):
-        shutil.rmtree(cls.tmp)
+        remove_dir(cls.tmp)
 
     def _export(self, name, layout="interlaced", channels=(0, 1, 2, 3), i0=0, i1=N, **kw):
         path = os.path.join(self.tmp, name)

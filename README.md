@@ -1,6 +1,10 @@
-# Multi-Channel Neural Viewer
+# CortexUI
 
 A desktop app (Windows / macOS) for viewing and analyzing multi-channel neural recordings from **Tucker-Davis Technologies (TDT)** and **Blackrock Neurotech** systems.
+
+## Download
+
+Get the latest version from **[Releases](https://github.com/sidhantm123/CortexUI/releases/latest)**: a `.dmg` for Macs (Apple silicon or Intel, macOS 14 or later) or a `.zip` for Windows 10/11. No Python needed. The release page says which file to pick and how to open the app the first time: it is not signed, so macOS and Windows ask once.
 
 ## Features
 
@@ -24,28 +28,32 @@ Open a recording folder via **File → Open Recording Folder…**, drag-and-drop
 | TDT | `.tev`, `.tsq`, `.tdx`, `.sev`, … | The index is parsed with the `tdt` package; stream data is read from the `.tev` directly (`.sev` stores through `tdt`) |
 | Blackrock | `.ns1`–`.ns6`, `.ccf` | Read with `neo`. Each `.nsX` file is one stream. Channel labels come from the `.ccf`, and **View → Recording Info** (Ctrl+I) shows its channel settings. Analog inputs (`ainp*`, or ID > 128 without an `elec`/`chan` label) are detected automatically. A damaged `.nsX` or `.ccf` is skipped with a note. `.nev` (spikes/events) is not loaded yet. |
 
-## Setup
+## Run from source
 
 Requires Python 3.11+.
 
 ```bash
-python3 -m venv tdtgui
-source tdtgui/bin/activate        # Windows: tdtgui\Scripts\activate
+python3 -m venv .venv
+source .venv/bin/activate         # Windows: .venv\Scripts\activate
 pip install -r requirements.txt
 python main.py
 ```
 
-Run the tests:
+Run the tests (`-v` lists them, `-k word` picks some):
 
 ```bash
-python -m unittest discover tests
+python -m tests
 ```
 
-Build a standalone app (output in `dist/`):
+Build a standalone app for this machine (output in `dist/`):
 
 ```bash
-pyinstaller --clean tdt_viewer.spec
+pyinstaller --clean --noconfirm cortexui.spec   # macOS: CortexUI.app; Windows: CortexUI/CortexUI.exe
+packaging/make_dmg.sh                           # macOS: CortexUI-<version>-macOS-<arch>.dmg
+python packaging/make_icons.py                  # only when assets/logo.png changes (writes the icons)
 ```
+
+**Making a release:** set `APP_VERSION` in `version.py`, merge into `main`, then tag it (`git tag v1.0.0 && git push origin v1.0.0`). The **Build** workflow (`.github/workflows/release.yml`) builds and smoke-tests the app on Windows, an Apple silicon Mac and an Intel Mac, then creates a draft release with the three files and `packaging/release_notes.md`; publish it on GitHub. The same workflow runs on pull requests into `main` and on `release/**` branches without releasing. Release files come from the workflow: a local build runs only on the kind of machine that built it.
 
 ## Usage
 
@@ -95,8 +103,8 @@ See `CLAUDE.md` for what's in progress.
 ## Troubleshooting
 
 - **Filter warnings**: cutoff frequencies must be below half the sample rate (the Nyquist frequency).
-- **macOS "app is damaged"** (unsigned build): run `xattr -cr dist/TDT_Viewer.app`.
-- **Unexpected errors** are shown once and written to `error.log` in the app's data folder (macOS: `~/Library/Application Support/TDT Viewer/Multi-Channel Neural Viewer/`). Please include it when reporting a problem.
+- **macOS won't open the app** ("cannot be opened" or "is damaged"; it is not signed): follow the first-launch steps on the [release page](https://github.com/sidhantm123/CortexUI/releases/latest), or run `xattr -cr /Applications/CortexUI.app` in Terminal.
+- **Unexpected errors** are shown once and written to `error.log` in the app's data folder (macOS: `~/Library/Application Support/CortexUI/`, Windows: `%APPDATA%\CortexUI\`). Please include it when reporting a problem.
 
 ## License
 

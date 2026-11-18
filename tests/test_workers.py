@@ -1,6 +1,5 @@
 """Long-job workers: a job cancelled during its last read reports cancelled, never a result."""
 import os
-import shutil
 import sys
 import tempfile
 import unittest
@@ -8,6 +7,8 @@ import unittest
 import numpy as np
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+from tests import remove_dir  # noqa: E402
 
 from blackrock_io import BlackrockReader
 from blackrock_io.blackrock_reader import NEO_AVAILABLE
@@ -65,7 +66,7 @@ class TestCancelAfterLastRead(unittest.TestCase):
 
     @classmethod
     def tearDownClass(cls):
-        shutil.rmtree(cls.tmp)
+        remove_dir(cls.tmp)
 
     def _run(self, make, cancel_at=None, fail_at=None):
         """Run make(reader) synchronously; returns (emitted signal names, result, reads)."""
