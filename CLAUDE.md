@@ -11,7 +11,7 @@ delete details that the code or git history already records.
 | | |
 |---|---|
 | Active branch | `feature/settings-help` (from `main` @ `b7e61fc`, after PR #4 merged `NSP_Basic`) |
-| Last commit | `b7e61fc` Merge pull request #4 from sidhantm123/NSP_Basic |
+| Last commit | `6bc089f` Explain every editable setting: tooltips and a Settings Guide |
 | Tests | 200 passing: `tdtgui/bin/python -m unittest discover tests` |
 | Next step | PR `feature/settings-help`; then package CortexUI v1.0 (plan approved 2026-11-18: name CortexUI, generated icon, `.dmg` + Windows `.zip` via GitHub Actions, draft release) |
 
@@ -128,7 +128,7 @@ delete details that the code or git history already records.
 31. (`fd3a3b2`) CAR/CMR deselection (user request): a drag that starts on an electrode that already has the selected brush
     removes the brush from the electrodes in the run (other subgroups' left alone); elsewhere drags assign as
     before. **Deselect All** (status line) clears every electrode, exclusions included; the subgroups stay.
-32. Every editable setting explained (user request): `ui/help_text.py` holds one entry per setting (74; title,
+32. (`6bc089f`) Every editable setting explained (user request): `ui/help_text.py` holds one entry per setting (74; title,
     text, default) used for the tooltips (`explain(key, field, label)`) and **Help → Settings Guide** (F1;
     non-modal, searchable). `tests/test_help.py` fails on any editable control without a tooltip.
 
