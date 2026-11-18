@@ -1,4 +1,4 @@
-# Multi-Channel Neural Viewer
+# CortexUI
 
 A desktop app (Windows / macOS) for viewing and analyzing multi-channel neural recordings from **Tucker-Davis Technologies (TDT)** and **Blackrock Neurotech** systems.
 
@@ -29,8 +29,8 @@ Open a recording folder via **File → Open Recording Folder…**, drag-and-drop
 Requires Python 3.11+.
 
 ```bash
-python3 -m venv tdtgui
-source tdtgui/bin/activate        # Windows: tdtgui\Scripts\activate
+python3 -m venv .venv
+source .venv/bin/activate         # Windows: .venv\Scripts\activate
 pip install -r requirements.txt
 python main.py
 ```
@@ -96,7 +96,7 @@ See `CLAUDE.md` for what's in progress.
 
 - **Filter warnings**: cutoff frequencies must be below half the sample rate (the Nyquist frequency).
 - **macOS "app is damaged"** (unsigned build): run `xattr -cr dist/TDT_Viewer.app`.
-- **Unexpected errors** are shown once and written to `error.log` in the app's data folder (macOS: `~/Library/Application Support/TDT Viewer/Multi-Channel Neural Viewer/`). Please include it when reporting a problem.
+- **Unexpected errors** are shown once and written to `error.log` in the app's data folder (macOS: `~/Library/Application Support/CortexUI/`, Windows: `%APPDATA%\CortexUI\`). Please include it when reporting a problem.
 
 ## License
 

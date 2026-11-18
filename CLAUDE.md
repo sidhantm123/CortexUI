@@ -10,10 +10,10 @@ delete details that the code or git history already records.
 
 | | |
 |---|---|
-| Active branch | `feature/settings-help` (from `main` @ `b7e61fc`, after PR #4 merged `NSP_Basic`) |
-| Last commit | `6bc089f` Explain every editable setting: tooltips and a Settings Guide |
-| Tests | 200 passing: `tdtgui/bin/python -m unittest discover tests` |
-| Next step | PR `feature/settings-help`; then package CortexUI v1.0 (plan approved 2026-11-18: name CortexUI, generated icon, `.dmg` + Windows `.zip` via GitHub Actions, draft release) |
+| Active branch | `release/v1.0` (from `main` @ `cb5b2dc`, after PR #5 merged the settings help) |
+| Last commit | Packaging step 1: name CortexUI, `version.py`, `--smoke-test` |
+| Tests | 202 passing: `tdtgui/bin/python -m unittest discover tests` |
+| Next step | Packaging step 2: icon, `cortexui.spec`, local macOS build + `.dmg` (§4) |
 
 ### Done
 1. Analog events (`78664d0`), editable onset/offset (`7b559ef`), Blanking tab Basic/Advanced (`e60ac42`).
@@ -131,10 +131,17 @@ delete details that the code or git history already records.
 32. (`6bc089f`) Every editable setting explained (user request): `ui/help_text.py` holds one entry per setting (74; title,
     text, default) used for the tooltips (`explain(key, field, label)`) and **Help → Settings Guide** (F1;
     non-modal, searchable). `tests/test_help.py` fails on any editable control without a tooltip.
+33. Packaging step 1: the app is **CortexUI** (`version.py`: `APP_NAME`, `APP_VERSION`, `APP_URL`; title, splash,
+    About). No organization name, so `error.log` is in `~/Library/Application Support/CortexUI/` (`%APPDATA%\CortexUI`);
+    `QSettings("NSP", "MultiChannelNeuralViewer")` is kept on purpose (saved preferences carry over).
+    `main.py --smoke-test FOLDER` opens the folder in the real window and exits 0 once the first processed buffer
+    is in, or 1 on an error box, error toast, uncaught exception or 60 s; it prints the result, or (no console:
+    the windowed Windows app) writes a failure to `error.log`. `tests/test_smoke.py` runs it in a subprocess.
 
-### Branches
-- **`main`:** the TDT/Blackrock viewer with filters, FFT/PSD, probe map, export and `.ccf` info.
-- **`NSP_Basic`:** the current work, a step-by-step rebuild that follows the user's mockup.
+### Branches and repo
+- **Repo:** `github.com/sidhantm123/CortexUI` (public; renamed from `tdtgui` on 2026-11-19, old URLs redirect).
+- **`main`:** everything so far (PR #4 merged `NSP_Basic`, PR #5 the settings help). New work branches from it.
+- **`release/v1.0`:** packaging (§4).
 - **`nsp_pipeline`:** a **local archive only, never merge it**. It held an elaborate NSP preprocessing pipeline the user dropped
   as "too complicated". Its `nsp_pipeline/events.py` helpers were reused in `dsp/events.py`.
 
@@ -166,7 +173,7 @@ delete details that the code or git history already records.
 ## 3. Architecture
 
 ```
-main.py               entry point
+main.py               entry point (`--smoke-test FOLDER` checks a build);  version.py  app name + version
 core/app_state.py     AppState: reader, block, per-stream StreamState, analog assignments, events, session JSON
 core/workers.py       QRunnable workers (data load, filter, spectral, EventDetectWorker) + WorkerManager
 core/reader_factory.py  open_reader(folder) -> TDTReader | BlackrockReader
@@ -401,6 +408,17 @@ tests/                unittest; test_blackrock.py has write_nsx_23() to build sy
 
 ## 4. Roadmap
 
+### Package and release CortexUI v1.0 (approved 2026-11-18; one commit per step)
+Decisions: name CortexUI, generated icon, repo stays public, releases at `…/CortexUI/releases/latest`.
+1. Name, `version.py`, `--smoke-test`: done (§1 item 33).
+2. `packaging/make_icons.py` (Qt-drawn icon → `assets/icon.png/.icns/.ico`, committed), window icon,
+   `cortexui.spec` replaces `tdt_viewer.spec` (`upx=False`, bundle id `io.github.sidhantm123.cortexui`),
+   `packaging/make_dmg.sh` (hdiutil + Applications link); local build smoke-tested on RP01; min macOS from `minos`.
+3. `.github/workflows/release.yml`: PRs build + smoke test; `v*` tags also `gh release create --draft`; runners
+   `windows-latest`, `macos-latest` (arm64), `macos-15-intel`; `packaging/release_notes.md` (unsigned first launch).
+   Pushing a workflow needs the `workflow` scope on the stored credential.
+4. README Download/Build, PR (CI green on all three), then tag `v1.0.0` with the user's OK; the user publishes.
+
 ### Audit fixes (approved 2026-11-17): all 11 steps done (§1 items 13, 14, 16–24)
 Untested for lack of data: TDT `.sev` stores, a real TDT block, a lab probeinterface file.
 
@@ -455,7 +473,7 @@ Untested for lack of data: TDT `.sev` stores, a real TDT block, a lab probeinter
 
 ## 6. Environment
 
-- **Venv:** `tdtgui/` inside the repo. It was rebuilt after the repo moved from `~/Desktop/GUI`.
+- **Venv:** `tdtgui/` inside the repo (untracked; the README tells new setups to use `.venv`).
 - **Run:** `tdtgui/bin/python main.py`.
 - **Requirements:**
   - `requirements.txt` pins PySide6 6.10, pyqtgraph 0.14, neo 0.14.5, scipy, numpy and tdt.
