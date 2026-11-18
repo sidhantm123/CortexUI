@@ -48,7 +48,17 @@ jobs:
         run: python -m pip install -r requirements.txt
 
       - name: Unit tests
-        run: python -m unittest discover tests
+        # On failure the end of the output also becomes an annotation, which anyone can read
+        # (job logs need admin rights)
+        run: |
+          if ! python -X faulthandler -m unittest discover -v tests > tests.log 2>&1; then
+            cat tests.log
+            msg=$(tail -n 60 tests.log)
+            msg=${msg//'%'/'%25'}; msg=${msg//$'\r'/}; msg=${msg//$'\n'/'%0A'}
+            echo "::error title=Unit tests failed::$msg"
+            exit 1
+          fi
+          tail -n 3 tests.log
 
       - name: Build the app
         run: pyinstaller --clean --noconfirm cortexui.spec
@@ -64,11 +74,15 @@ jobs:
             app=dist/CortexUI.app/Contents/MacOS/CortexUI
             log="$HOME/Library/Application Support/CortexUI/error.log"
           fi
-          if "$app" --smoke-test smoke-data/rec; then
+          if "$app" --smoke-test smoke-data/rec > smoke.log 2>&1; then
+            cat smoke.log
             echo "smoke test passed"
           else
-            echo "::error::The built app failed its smoke test"
-            cat "$log" 2>/dev/null || true
+            cat smoke.log
+            # The app prints why; the windowed Windows app has no console and writes error.log
+            msg=$({ cat smoke.log; tail -n 40 "$log" 2>/dev/null || true; } | tail -n 60)
+            msg=${msg//'%'/'%25'}; msg=${msg//$'\r'/}; msg=${msg//$'\n'/'%0A'}
+            echo "::error title=The built app failed its smoke test::$msg"
             exit 1
           fi
 
