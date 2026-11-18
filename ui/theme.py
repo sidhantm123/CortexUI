@@ -283,16 +283,32 @@ class ElidedLabel(QLabel):
         super().setText(self.fontMetrics().elidedText(self._full, Qt.TextElideMode.ElideMiddle, width))
 
 
+class ProgressDialog(QProgressDialog):
+    """
+    Progress dialog whose progress is reported on its bar (progress_bar().setValue), never with
+    QProgressDialog.setValue: for a modal dialog that processes events, so a job's result
+    handled there could close and delete the dialog inside its own setValue (a crash on RP01
+    under load). The event loop is running anyway.
+    """
+
+    def __init__(self, text: str, cancel_text: Optional[str], maximum: int, parent: QWidget):
+        super().__init__(text, cancel_text, 0, maximum, parent)
+        self._bar = QProgressBar(self)
+        self._bar.setTextVisible(False)
+        self.setBar(self._bar)
+
+    def progress_bar(self) -> QProgressBar:
+        return self._bar
+
+
 def progress_dialog(text: str, parent: QWidget, cancellable: bool = True,
-                    maximum: int = 100) -> QProgressDialog:
+                    maximum: int = 100) -> ProgressDialog:
     """
     Window-modal progress dialog with a thin bar; the percentage is appended to the text.
-    maximum=0 gives a busy indicator.
+    maximum=0 gives a busy indicator. Report progress with progress_bar().setValue.
     """
-    dialog = QProgressDialog(text, "Cancel" if cancellable else None, 0, maximum, parent)
-    bar = QProgressBar(dialog)
-    bar.setTextVisible(False)
-    dialog.setBar(bar)
+    dialog = ProgressDialog(text, "Cancel" if cancellable else None, maximum, parent)
+    bar = dialog.progress_bar()
     dialog.setRange(0, maximum)
     dialog.setWindowModality(Qt.WindowModality.WindowModal)
     dialog.setMinimumDuration(0)

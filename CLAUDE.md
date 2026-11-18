@@ -11,7 +11,7 @@ delete details that the code or git history already records.
 | | |
 |---|---|
 | Active branch | `NSP_Basic` (not pushed; branched from `main` @ `beb2da4`) |
-| Last commit | `926c09e` Add a frequency range for the Spectrum plot |
+| Last commit | `605023b` Auto-group CAR/CMR electrodes by array |
 | Tests | 190 passing: `tdtgui/bin/python -m unittest discover tests` |
 | Next step | Backlog items chosen 2026-11-18, one commit each: FFT/PSD range (done), CAR auto-group by array (done), event shading on Time Series; then the user tests |
 
@@ -135,10 +135,16 @@ delete details that the code or git history already records.
 26. (`926c09e`) Analysis → Frequency Range (user request): Min/Max Hz shown in the Spectrum plot. `SpectrumPlot` keeps the
     whole result and `set_band` crops what is drawn (y auto-fits the band), so changing the range needs no
     re-analysis; saved per stream (`fft_fmin`/`fft_fmax`, None = full).
-27. CAR/CMR **Auto-group by Array** (user request): one subgroup per array, named after it, from the labels
+27. (`605023b`) CAR/CMR **Auto-group by Array** (user request): one subgroup per array, named after it, from the labels
     (`models.stream_state.array_name`: the label before its trailing number, `elec1-10` → `elec1`; arrays of < 2
     electrodes are left out). Both auto-group buttons keep Exclude marks. The dialog says whether its numbers are
     electrode or channel numbers, and hovering an electrode shows its label and channel.
+28. **Fix: crash or freeze at the end of a long job** (found while testing 29; intermittent, reproduced on RP01
+    under load: segfault inside `QProgressDialog::setValue`, and a stall in `progress.close()`). For a modal
+    dialog `setValue` processes events, so the job's result could be handled inside it and close (and, since
+    audit step 3, `deleteLater`) the dialog under its own `setValue`. Job progress now goes to the bar
+    (`theme.ProgressDialog.progress_bar().setValue`), which never processes events; 30 detections under
+    load ran clean (the old code crashed by the second).
 
 ### Branches
 - **`main`:** the TDT/Blackrock viewer with filters, FFT/PSD, probe map, export and `.ccf` info.
@@ -395,6 +401,8 @@ tests/                unittest; test_blackrock.py has write_nsx_23() to build sy
   - Workers check `is_cancelled()` before emitting a result. Closing a `QProgressDialog` emits `canceled`, so check
     cancellation *before* `close()`; `QProgressDialog.cancel()` does **not** emit it (tests click the button).
   - They are **not** submitted to `_worker_manager`, because `cancel_all()` runs on every plot refresh.
+  - Report progress with `progress_bar().setValue`, **never `QProgressDialog.setValue`** (it processes events for a
+    modal dialog: a result handled inside it can close/delete the dialog under it → crash).
   - Anything that replaces the recording calls `_stop_jobs()` (bumps `_recording_gen`, cancels every job).
 - Don't rebuild a widget from inside its own signal (table `itemChanged`, line `sigPositionChangeFinished`); defer with
   `QTimer.singleShot(0, ...)`.

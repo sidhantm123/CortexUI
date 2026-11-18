@@ -1993,7 +1993,8 @@ class MainWindow(QMainWindow):
             if on_cancelled is not None:
                 on_cancelled()
 
-        worker.signals.progress.connect(progress.setValue)
+        # The bar itself, not QProgressDialog.setValue (see theme.ProgressDialog)
+        worker.signals.progress.connect(progress.progress_bar().setValue)
         progress.canceled.connect(worker.cancel)
         worker.signals.result.connect(done)
         worker.signals.error.connect(failed)
