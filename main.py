@@ -151,7 +151,7 @@ def main():
     try:
         from PySide6.QtWidgets import QApplication, QSplashScreen
         from PySide6.QtCore import Qt
-        from PySide6.QtGui import QPixmap, QColor, QPainter, QFont
+        from PySide6.QtGui import QPixmap, QColor, QPainter, QFont, QIcon
     except ImportError:
         print("Error: PySide6 is required. Install with: pip install PySide6")
         sys.exit(1)
@@ -192,6 +192,8 @@ def main():
     app = QApplication(sys.argv)
     app.setApplicationName(APP_NAME)  # no organization: app data goes to …/CortexUI
     app.setApplicationVersion(APP_VERSION)
+    if sys.platform != "darwin":  # macOS takes the bundle's .icns (this PNG would replace it in the Dock)
+        app.setWindowIcon(QIcon(os.path.join(getattr(sys, "_MEIPASS", APP_DIR), "assets", "icon.png")))
     install_error_log(app)
     # Dark theme (palette, stylesheet, fonts) — applied once
     from ui.theme import apply_theme, ui_font, WINDOW, TEXT

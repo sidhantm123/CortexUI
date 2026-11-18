@@ -41,10 +41,12 @@ Run the tests:
 python -m unittest discover tests
 ```
 
-Build a standalone app (output in `dist/`):
+Build a standalone app for this machine (output in `dist/`):
 
 ```bash
-pyinstaller --clean tdt_viewer.spec
+pyinstaller --clean --noconfirm cortexui.spec   # macOS: CortexUI.app; Windows: CortexUI/CortexUI.exe
+packaging/make_dmg.sh                           # macOS: CortexUI-<version>-macOS-<arch>.dmg
+python packaging/make_icons.py                  # only when the icon changes (writes assets/)
 ```
 
 ## Usage
@@ -95,7 +97,7 @@ See `CLAUDE.md` for what's in progress.
 ## Troubleshooting
 
 - **Filter warnings**: cutoff frequencies must be below half the sample rate (the Nyquist frequency).
-- **macOS "app is damaged"** (unsigned build): run `xattr -cr dist/TDT_Viewer.app`.
+- **macOS "app is damaged"** (unsigned build): run `xattr -cr dist/CortexUI.app`.
 - **Unexpected errors** are shown once and written to `error.log` in the app's data folder (macOS: `~/Library/Application Support/CortexUI/`, Windows: `%APPDATA%\CortexUI\`). Please include it when reporting a problem.
 
 ## License

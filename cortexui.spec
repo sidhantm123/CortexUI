@@ -1,21 +1,20 @@
 # -*- mode: python ; coding: utf-8 -*-
 """
-PyInstaller spec file for TDT Multi-Channel Viewer.
+PyInstaller spec for CortexUI (run from the repo root):
 
-Build commands:
-    Windows: pyinstaller tdt_viewer.spec
-    macOS:   pyinstaller tdt_viewer.spec
+    pyinstaller --clean --noconfirm cortexui.spec
 
-The resulting executable will be in dist/TDT_Viewer/
+macOS: dist/CortexUI.app (then packaging/make_dmg.sh); Windows: dist/CortexUI/CortexUI.exe.
+PyInstaller builds for the machine it runs on: Windows and each Mac architecture are built separately.
 """
-
-import sys
 import os
+import sys
+
 from PyInstaller.utils.hooks import collect_data_files, collect_submodules
 
-block_cipher = None
+sys.path.insert(0, SPECPATH)
+from version import APP_NAME, APP_VERSION  # noqa: E402
 
-# Collect all submodules for packages that need them
 hiddenimports = [
     'scipy.signal',
     'scipy.fft',
@@ -29,21 +28,19 @@ hiddenimports = [
     'PySide6.QtGui',
     'PySide6.QtWidgets',
 ]
-
-# Add scipy submodules
 hiddenimports += collect_submodules('scipy')
 hiddenimports += collect_submodules('neo.rawio')
 
-# Data files
-datas = []
-datas += collect_data_files('pyqtgraph')
-datas += [('ui/assets', 'ui/assets')]  # theme images (checkmark)
-
-# Try to collect tdt data files if available
+datas = collect_data_files('pyqtgraph')
+datas += [
+    ('ui/assets', 'ui/assets'),  # theme images (checkmark)
+    ('assets/icon.png', 'assets'),  # window icon (Windows)
+]
 try:
     datas += collect_data_files('tdt')
 except Exception:
     pass
+
 a = Analysis(
     ['main.py'],
     pathex=[],
@@ -53,32 +50,24 @@ a = Analysis(
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],
-    excludes=[
-        'tkinter',
-        'matplotlib',
-        'IPython',
-        'jupyter',
-        'notebook',
-    ],
-    win_no_prefer_redirects=False,
-    win_private_assemblies=False,
-    cipher=block_cipher,
+    excludes=['tkinter', 'matplotlib', 'IPython', 'jupyter', 'notebook', 'h5py'],
     noarchive=False,
 )
 
-pyz = PYZ(a.pure, a.zipped_data, cipher=block_cipher)
+pyz = PYZ(a.pure, a.zipped_data)
 
+# upx=False everywhere: UPX can break Qt libraries on macOS and trips antivirus scanners on Windows
 exe = EXE(
     pyz,
     a.scripts,
     [],
     exclude_binaries=True,
-    name='TDT_Viewer',
+    name=APP_NAME,
     debug=False,
     bootloader_ignore_signals=False,
     strip=False,
-    upx=True,
-    console=False,  # Set to True for debugging
+    upx=False,
+    console=False,
     disable_windowed_traceback=False,
     argv_emulation=False,
     target_arch=None,
@@ -90,26 +79,26 @@ exe = EXE(
 coll = COLLECT(
     exe,
     a.binaries,
-    a.zipfiles,
     a.datas,
     strip=False,
-    upx=True,
-    upx_exclude=[],
-    name='TDT_Viewer',
+    upx=False,
+    name=APP_NAME,
 )
 
-# macOS app bundle
 if sys.platform == 'darwin':
     app = BUNDLE(
         coll,
-        name='TDT_Viewer.app',
+        name=f'{APP_NAME}.app',
         icon='assets/icon.icns',
-        bundle_identifier='com.tdtviewer.app',
+        bundle_identifier='io.github.sidhantm123.cortexui',
+        version=APP_VERSION,
         info_plist={
-            'CFBundleName': 'TDT Viewer',
-            'CFBundleDisplayName': 'TDT Multi-Channel Viewer',
-            'CFBundleVersion': '1.0.0',
-            'CFBundleShortVersionString': '1.0.0',
+            'CFBundleName': APP_NAME,
+            'CFBundleDisplayName': APP_NAME,
+            'CFBundleVersion': APP_VERSION,
+            'CFBundleShortVersionString': APP_VERSION,
+            # numpy/scipy wheels for macOS are built for 14 and later (Accelerate)
+            'LSMinimumSystemVersion': '14.0',
             'NSHighResolutionCapable': True,
             'NSRequiresAquaSystemAppearance': False,
         },

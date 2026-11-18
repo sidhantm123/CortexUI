@@ -11,9 +11,9 @@ delete details that the code or git history already records.
 | | |
 |---|---|
 | Active branch | `release/v1.0` (from `main` @ `cb5b2dc`, after PR #5 merged the settings help) |
-| Last commit | Packaging step 1: name CortexUI, `version.py`, `--smoke-test` |
+| Last commit | Packaging step 2: icon, `cortexui.spec`, `make_dmg.sh` |
 | Tests | 202 passing: `tdtgui/bin/python -m unittest discover tests` |
-| Next step | Packaging step 2: icon, `cortexui.spec`, local macOS build + `.dmg` (§4) |
+| Next step | Packaging step 3: `.github/workflows/release.yml` + release notes (§4) |
 
 ### Done
 1. Analog events (`78664d0`), editable onset/offset (`7b559ef`), Blanking tab Basic/Advanced (`e60ac42`).
@@ -131,12 +131,17 @@ delete details that the code or git history already records.
 32. (`6bc089f`) Every editable setting explained (user request): `ui/help_text.py` holds one entry per setting (74; title,
     text, default) used for the tooltips (`explain(key, field, label)`) and **Help → Settings Guide** (F1;
     non-modal, searchable). `tests/test_help.py` fails on any editable control without a tooltip.
-33. Packaging step 1: the app is **CortexUI** (`version.py`: `APP_NAME`, `APP_VERSION`, `APP_URL`; title, splash,
+33. (`1c8e821`) Packaging step 1: the app is **CortexUI** (`version.py`: `APP_NAME`, `APP_VERSION`, `APP_URL`; title, splash,
     About). No organization name, so `error.log` is in `~/Library/Application Support/CortexUI/` (`%APPDATA%\CortexUI`);
     `QSettings("NSP", "MultiChannelNeuralViewer")` is kept on purpose (saved preferences carry over).
     `main.py --smoke-test FOLDER` opens the folder in the real window and exits 0 once the first processed buffer
     is in, or 1 on an error box, error toast, uncaught exception or 60 s; it prints the result, or (no console:
     the windowed Windows app) writes a failure to `error.log`. `tests/test_smoke.py` runs it in a subprocess.
+34. Packaging step 2: `packaging/make_icons.py` draws the icon with Qt (three channels, the middle one spiking in the
+    accent; grey traces only from 48 px) → `assets/icon.png`, `.ico` (PNG entries, no Pillow), `.icns` (iconutil);
+    window icon outside macOS. `cortexui.spec` (replaces `tdt_viewer.spec`; `upx=False`, `h5py` excluded,
+    `LSMinimumSystemVersion` 14.0) and `packaging/make_dmg.sh` (ditto + Applications link, hdiutil UDZO, retries).
+    Local Intel build: 181 MB app, 87 MB `.dmg`, ad-hoc signed, smoke test OK on RP01 (5 s warm, ~40 s first run).
 
 ### Branches and repo
 - **Repo:** `github.com/sidhantm123/CortexUI` (public; renamed from `tdtgui` on 2026-11-19, old URLs redirect).
@@ -410,10 +415,9 @@ tests/                unittest; test_blackrock.py has write_nsx_23() to build sy
 
 ### Package and release CortexUI v1.0 (approved 2026-11-18; one commit per step)
 Decisions: name CortexUI, generated icon, repo stays public, releases at `…/CortexUI/releases/latest`.
-1. Name, `version.py`, `--smoke-test`: done (§1 item 33).
-2. `packaging/make_icons.py` (Qt-drawn icon → `assets/icon.png/.icns/.ico`, committed), window icon,
-   `cortexui.spec` replaces `tdt_viewer.spec` (`upx=False`, bundle id `io.github.sidhantm123.cortexui`),
-   `packaging/make_dmg.sh` (hdiutil + Applications link); local build smoke-tested on RP01; min macOS from `minos`.
+1–2. Name, `version.py`, `--smoke-test`; icon, spec, `.dmg`: done (§1 items 33–34).
+   **Minimum macOS 14:** numpy/scipy install as `macosx_14_0` wheels (PySide6's say 13). **Release builds come
+   from the CI only:** this Mac's Homebrew Python bundles its own libssl/liblzma built for macOS 26.
 3. `.github/workflows/release.yml`: PRs build + smoke test; `v*` tags also `gh release create --draft`; runners
    `windows-latest`, `macos-latest` (arm64), `macos-15-intel`; `packaging/release_notes.md` (unsigned first launch).
    Pushing a workflow needs the `workflow` scope on the stored credential.
