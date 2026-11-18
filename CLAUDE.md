@@ -10,7 +10,7 @@ delete details that the code or git history already records.
 
 | | |
 |---|---|
-| Active branch | `NSP_Basic` (not pushed; branched from `main` @ `beb2da4`) |
+| Active branch | `NSP_Basic` (pushed 2026-11-18, PR into `main`; branched from `main` @ `beb2da4`) |
 | Last commit | `fd3a3b2` Deselect CAR/CMR electrodes by dragging; add Deselect All |
 | Tests | 196 passing: `tdtgui/bin/python -m unittest discover tests` |
 | Next step | User tests the plot-edge fix and CAR/CMR deselection |
