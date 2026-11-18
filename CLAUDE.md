@@ -11,7 +11,7 @@ delete details that the code or git history already records.
 | | |
 |---|---|
 | Active branch | `NSP_Basic` (not pushed; branched from `main` @ `beb2da4`) |
-| Last commit | `eb4f9f4` Fix a straight line at the right edge of zoomed-in plots |
+| Last commit | `fd3a3b2` Deselect CAR/CMR electrodes by dragging; add Deselect All |
 | Tests | 196 passing: `tdtgui/bin/python -m unittest discover tests` |
 | Next step | User tests the plot-edge fix and CAR/CMR deselection |
 
@@ -152,7 +152,7 @@ delete details that the code or git history already records.
 30. (`eb4f9f4`) **Fix (user report): a straight line at the right edge of both plots when zoomed in.** Item 18 turned the
     min/max decimation's leftover samples (up to `n_bins − 1`, e.g. 3,100 of an 83,100-sample view) into one bin
     drawn as two points. Bins are now `ceil(n / n_bins)` samples, so the leftover is shorter than one bin.
-31. CAR/CMR deselection (user request): a drag that starts on an electrode that already has the selected brush
+31. (`fd3a3b2`) CAR/CMR deselection (user request): a drag that starts on an electrode that already has the selected brush
     removes the brush from the electrodes in the run (other subgroups' left alone); elsewhere drags assign as
     before. **Deselect All** (status line) clears every electrode, exclusions included; the subgroups stay.
 
