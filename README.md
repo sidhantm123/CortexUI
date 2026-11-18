@@ -35,10 +35,10 @@ pip install -r requirements.txt
 python main.py
 ```
 
-Run the tests:
+Run the tests (`-v` lists them, `-k word` picks some):
 
 ```bash
-python -m unittest discover tests
+python -m tests
 ```
 
 Build a standalone app for this machine (output in `dist/`):

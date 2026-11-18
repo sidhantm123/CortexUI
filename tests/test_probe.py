@@ -1,7 +1,6 @@
 """Probe geometry: probeinterface channel indices (0-based, -1 = not connected)."""
 import json
 import os
-import shutil
 import sys
 import tempfile
 import unittest
@@ -9,6 +8,8 @@ import unittest
 import numpy as np
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+from tests import remove_dir  # noqa: E402
 
 from blackrock_io.blackrock_reader import NEO_AVAILABLE
 from core.app_state import AppState
@@ -65,7 +66,7 @@ class TestProbeInSessions(unittest.TestCase):
         self.session = os.path.join(self.tmp, "s.json")
 
     def tearDown(self):
-        shutil.rmtree(self.tmp)
+        remove_dir(self.tmp)
 
     def test_new_sessions_round_trip(self):
         self.app.set_probe(ProbeGeometry.from_probeinterface_dict(probe_dict([0, 3, -1])))

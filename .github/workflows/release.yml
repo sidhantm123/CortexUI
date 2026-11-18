@@ -51,7 +51,7 @@ jobs:
         # On failure the details also become annotations, which anyone can read (job logs need
         # admin rights); faulthandler names the test if one crashes
         run: |
-          if ! python -X faulthandler -m unittest discover -v tests > tests.log 2>&1; then
+          if ! python -X faulthandler -m tests -v > tests.log 2>&1; then
             cat tests.log
             python packaging/ci_annotate.py "Unit tests failed" tests.log
             exit 1

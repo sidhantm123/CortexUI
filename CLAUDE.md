@@ -12,7 +12,7 @@ delete details that the code or git history already records.
 |---|---|
 | Active branch | `release/v1.0` (from `main` @ `cb5b2dc`, after PR #5 merged the settings help) |
 | Last commit | Packaging step 3: `.github/workflows/release.yml`, `packaging/release_notes.md` |
-| Tests | 202 passing: `tdtgui/bin/python -m unittest discover tests` |
+| Tests | 202 passing: `tdtgui/bin/python -m tests` (exit code 0 checked) |
 | Next step | Packaging step 3: first CI run on the three runners; then step 4 (§4) |
 
 ### Done
@@ -60,46 +60,17 @@ delete details that the code or git history already records.
     (0–10 % of Detect Spikes). The chunk pipeline frees each chunk before reading the next (two were alive at
     once). RP01, 128 ch, BP 250–5000: 20 s view + CAR peak 2.75 → 1.11 GB numpy, 10 s BP 0.87 → 0.61 GB; σ
     identical to 1e-7.
-18. (`7899b48`) Audit step 5 (render path): a fully blanked view (NaN RMS) with a probe map loaded made the probe map raise,
-    which discarded every load in that view (frozen trace, "Could not process" toast); NaN is now "no data" and
-    the probe map updates after the trace. Blank shading reuses its items and skips unchanged spans; analog
-    markers and raster bands rebuild only when the events in view change; the probe map doesn't rebuild while
-    hidden. Min/max decimation now draws the last samples of a view. Rerender 13 → 8 ms (18 → 8 ms with the
-    probe tab shown); what remains of a pan step is pyqtgraph painting the axes.
-19. (`3e49243`) Audit step 6 (failed Open / session): `AppState.load_block` opens the new recording before closing the old
-    one, so a failed Open changes nothing (it used to empty the state under the old panels); the probe is kept
-    across recordings, as the UI already showed. `load_session` parses the whole file before opening the
-    recording; unknown or invalid saved filters are skipped with a `load_messages` note (one used to abort the
-    session). `save_session` writes a `.tmp` file and renames it.
-20. (`7658f42`) Audit step 7 (events / assignments): unassigning a line or moving it to another modality drops its events
-    (`AppState._drop_events`); a modality's blanking result goes with its last event (its tab disappears) and is
-    marked stale otherwise; `assignments_changed(bool)` re-processes when blanking went. Analog-list edits also
-    take new analog channels out of CAR/CMR groups and refresh the Blanking tab. Excluded trials follow their
-    events through renumbering (`_renumber`); "nan"/"inf" in an event cell is rejected (`round(nan)` raised).
-21. (`97d2973`) Audit step 8 (Analyze): `SpectralWorker` reads through `iter_processed_chunks` (blanking, filters, CAR/CMR
-    with all channels: CAR used to be skipped silently) and runs via `_run_job("analysis")` with Cancel.
-    Intervals are validated and capped at `MAX_ANALYSIS_SAMPLES` (3e7: 8 ch → 125 s). The pipeline collects
-    filter warnings (`warnings=` list). RP01 8 ch × 60 s BP+CAR PSD: 5.6 s, GUI stalls ≤ 37 ms.
-22. (`7cb3027`) Audit step 9 (small fixes): `elec…`/`chan…` labels are neural whatever their ID; probe Table Editor works
-    (Add Row passed `clicked(bool)`; OK follows the tab); event lines preallocated (RP01 3 lines 0.70 → 0.58
-    GB); window shown before `splash.finish` (−1.0 s at startup); `main.install_error_log` (error.log in
-    AppDataLocation + one message per error); Blackrock `_sample_index` (`int(n/fs*fs)` < n for 1–7 % of n);
-    FFT amplitude divides by the window sum (Hann read ×0.5); σ = 0 → NaN; export summary / spike detection /
-    analysis report filter warnings; an unreadable `.ccf`/`.nsX` is skipped with `metadata["notes"]` (neo
-    parsed every `.nsX` of a recording, so one damaged file blocked all: `_only_nsx`); names escaped in rich
-    text; the filter dialog validates CAR/CMR on OK; `FilterWorker`/`DecimationWorker` deleted.
-23. (`4ef4e41`) Audit step 10 (TDT): **TDT viewing was broken** with numpy 2 (pinned 2.4.1): tdt 0.7.3's windowed stream
-    reads compute `np.arange(np.uint16(nchan), 0, -1)` and uint64 differences that wrap, so every window of a
-    multi-channel store not starting at 0 s came back empty. `TDTReader` now parses the `.tsq` once
-    (`headers=1`) and reads `.tev` records itself (`_TevStream`: per-channel byte offsets, `npts` samples per
-    record) at exact `floor(t*fs + 1e-6)` indices; nothing is cached (it used to keep the whole block in RAM
-    and re-parse the `.tsq` on every read). Stores in `.sev` files still go through tdt (reused headers,
-    t1 a quarter sample early for its `ceil`, trimmed): **untested, no `.sev` data**. Tested on synthetic
-    blocks (`tests/test_tdt.py` writes `.tsq`/`.tev` that tdt itself reads back exactly).
-24. (`4dbb788`) Audit step 11 (probe indices): probeinterface `device_channel_indices` are read 0-based (they were taken as
-    1-based, shifting every contact by one channel); −1 = not connected (`models.probe.UNWIRED`: drawn grey, left
-    out of shank groups and selection, "–" in the Table Editor). Sessions write `probe_index_base: 0`; older ones
-    (no key, saved as channel + 1) still load. **Not checked against a lab probe file.**
+18–22. Audit steps 5–9 (`7899b48` render path: NaN RMS no longer freezes the trace, blank/event items reused; `3e49243`
+    failed Open/session change nothing, `.tmp` + rename saves; `7658f42` unassigning a line drops its events, trials
+    follow renumbering; `97d2973` Analyze through `iter_processed_chunks` with CAR, capped at `MAX_ANALYSIS_SAMPLES`;
+    `7cb3027` small fixes: `_sample_index`, FFT window-sum amplitude, σ = 0 → NaN, `install_error_log`, `_only_nsx`).
+23. (`4ef4e41`) Audit step 10 (TDT): **TDT viewing was broken** with numpy 2 (tdt 0.7.3's windowed reads wrap uint
+    arithmetic). `TDTReader` parses the `.tsq` once (`headers=1`) and reads `.tev` records itself (`_TevStream`) at
+    `floor(t*fs + 1e-6)`; `.sev` stores still go through tdt (t1 a quarter sample early): **untested, no `.sev`
+    data**. `tests/test_tdt.py` writes synthetic `.tsq`/`.tev` that tdt itself reads back exactly.
+24. (`4dbb788`) Audit step 11 (probe indices): `device_channel_indices` are 0-based (were taken as 1-based); −1 =
+    not connected (`models.probe.UNWIRED`). Sessions write `probe_index_base: 0`; older ones still load. **Not
+    checked against a lab probe file.**
 25. (`ece5a7a`) CAR/CMR group dialog (user request): press and drag selects every electrode between the press and the cursor
     in reading order (`_ChannelGrid`: buttons are mouse-transparent, the nearest button centre wins, auto-scroll
     past the visible rows); drags add up; the selected subgroup takes electrodes over; an **Exclude** brush leaves
@@ -404,6 +375,13 @@ tests/                unittest; test_blackrock.py has write_nsx_23() to build sy
   - Anything that replaces the recording calls `_stop_jobs()` (bumps `_recording_gen`, cancels every job).
 - **Every editable setting gets a `HELP` entry** (`ui/help_text.py`, in `SECTIONS`) and `explain(key, field,
   label)`; check the text against the code (defaults, units). `tests/test_help.py` enforces the tooltips.
+- **Exit via `os._exit`** (end of `main.main`, `tests/__main__.py`): PySide's teardown at interpreter exit destroys
+  Qt objects in no set order; freeing a pyqtgraph item can free a lambda holding the last reference to its own
+  plot, which deletes the item again → crash after everything finished (SIGILL macOS, heap corruption Windows;
+  `python -m unittest discover` exited 132 after "OK" since long before v1.0). Explicitly deleting pyqtgraph
+  widgets (`shiboken6.delete`) crashed too (QGraphicsGridLayout wrapper). Anything that must persist is saved
+  before (`QSettings.sync()`); `closeEvent` stops jobs. Run tests with `python -m tests`, never trust "OK" alone.
+- Tests delete temp folders with `tests.remove_dir` (Windows can't delete a still-mapped `.nsX`).
 - Don't rebuild a widget from inside its own signal (table `itemChanged`, line `sigPositionChangeFinished`); defer with
   `QTimer.singleShot(0, ...)`.
 - Write commit messages in the imperative. **No Co-Authored-By or any other Claude attribution** (user rule,

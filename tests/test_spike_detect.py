@@ -2,12 +2,13 @@
 import sys
 import os
 import json
-import shutil
 import tempfile
 import unittest
 import numpy as np
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+from tests import remove_dir  # noqa: E402
 
 from blackrock_io import BlackrockReader
 from core.export import iter_processed_chunks
@@ -46,7 +47,7 @@ class TestSpikeDetect(unittest.TestCase):
 
     @classmethod
     def tearDownClass(cls):
-        shutil.rmtree(cls.tmp)
+        remove_dir(cls.tmp)
 
     def _detect(self, **kw):
         sigma = freeze_sigma(self.reader, "ns5", [0, 1], 0, 30000, FS, 2, kw.get("blank_results", ()), kw.get("filters"))

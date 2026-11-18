@@ -1,7 +1,6 @@
 """Tests for Blackrock (.nsX / .ccf) reading."""
 import sys
 import os
-import shutil
 import tempfile
 import unittest
 from pathlib import Path
@@ -9,6 +8,8 @@ import numpy as np
 
 # Add parent to path
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+from tests import remove_dir  # noqa: E402
 
 from blackrock_io import BlackrockReader, read_ccf
 from blackrock_io.blackrock_reader import NEO_AVAILABLE
@@ -108,7 +109,7 @@ class TestBlackrockReader(unittest.TestCase):
         )
 
     def tearDown(self):
-        shutil.rmtree(self.tmp)
+        remove_dir(self.tmp)
 
     def test_unreadable_files_are_skipped_with_a_note(self):
         (self.tmp / "rec001.ns2").write_bytes(b"NEURALCD" + b"\x00" * 20)  # truncated header
@@ -199,7 +200,7 @@ class TestCcfReader(unittest.TestCase):
         self.tmp = Path(tempfile.mkdtemp())
 
     def tearDown(self):
-        shutil.rmtree(self.tmp)
+        remove_dir(self.tmp)
 
     def test_xml_ccf(self):
         path = self.tmp / "a.ccf"
@@ -259,7 +260,7 @@ class TestReaderFactory(unittest.TestCase):
         self.tmp = Path(tempfile.mkdtemp())
 
     def tearDown(self):
-        shutil.rmtree(self.tmp)
+        remove_dir(self.tmp)
 
     def test_tdt_folder(self):
         from tdt_io import TDTReader

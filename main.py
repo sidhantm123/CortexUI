@@ -228,16 +228,25 @@ def main():
     splash.finish(window)  # waits until the window is on screen: show it first (else ~1 s)
 
     if smoke_folder is not None:
-        sys.exit(run_smoke_test(app, window, smoke_folder))
+        code = run_smoke_test(app, window, smoke_folder)
+    else:
+        # Handle command line argument (folder path)
+        if len(sys.argv) > 1:
+            folder_path = sys.argv[1]
+            if os.path.isdir(folder_path):
+                window._load_block(folder_path)
+        code = app.exec()
 
-    # Handle command line argument (folder path)
-    if len(sys.argv) > 1:
-        folder_path = sys.argv[1]
-        if os.path.isdir(folder_path):
-            window._load_block(folder_path)
-
-    # Run event loop
-    sys.exit(app.exec())
+    # End here, without the interpreter's teardown of the Qt objects (as pyqtgraph advises): PySide
+    # destroys them in no particular order, and freeing a plot item can free a lambda holding the
+    # last reference to its own plot, which then deletes the item a second time, a crash on quit
+    # (seen in the tests: SIGILL on macOS, heap corruption on Windows). Closing the window already
+    # stopped the jobs and closed the recording; the preferences are written here.
+    window._settings.sync()
+    for stream in (sys.stdout, sys.stderr):
+        if stream:
+            stream.flush()
+    os._exit(code)
 
 
 if __name__ == "__main__":
