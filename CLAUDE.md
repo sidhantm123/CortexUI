@@ -11,7 +11,7 @@ delete details that the code or git history already records.
 | | |
 |---|---|
 | Active branch | `release/v1.0` (from `main` @ `cb5b2dc`, after PR #5 merged the settings help) |
-| Last commit | Packaging step 4: README Download + release how-to |
+| Last commit | The user's logo (`assets/logo.png`) as the app icon |
 | Tests | 202 passing: `tdtgui/bin/python -m tests` (exit code 0 checked) |
 | Next step | PR `release/v1.0` → `main` (CI green); after the merge, tag `v1.0.0` with the user's OK (§4) |
 
@@ -108,9 +108,10 @@ delete details that the code or git history already records.
     `main.py --smoke-test FOLDER` opens the folder in the real window and exits 0 once the first processed buffer
     is in, or 1 on an error box, error toast, uncaught exception or 60 s; it prints the result, or (no console:
     the windowed Windows app) writes a failure to `error.log`. `tests/test_smoke.py` runs it in a subprocess.
-34. (`2bec03c`) Packaging step 2: `packaging/make_icons.py` draws the icon with Qt (three channels, the middle one spiking in the
-    accent; grey traces only from 48 px) → `assets/icon.png`, `.ico` (PNG entries, no Pillow), `.icns` (iconutil);
-    window icon outside macOS. `cortexui.spec` (replaces `tdt_viewer.spec`; `upx=False`, `h5py` excluded,
+34. (`2bec03c`) Packaging step 2: `packaging/make_icons.py` makes the icons from the **user's logo**
+    `assets/logo.png` (pink action potential on near-black, 1254 px; replaced the drawn icon after step 4) as a
+    rounded tile: `assets/icon.png`, `.ico` (PNG entries, no Pillow), `.icns` (iconutil, Apple's 824/1024 grid).
+    Below 128 px the line is dilated to ≥ 1.6 px (it faded at 16–32 px). Window icon outside macOS. `cortexui.spec` (replaces `tdt_viewer.spec`; `upx=False`, `h5py` excluded,
     `LSMinimumSystemVersion` 14.0) and `packaging/make_dmg.sh` (ditto + Applications link, hdiutil UDZO, retries).
     Local Intel build: 181 MB app, 87 MB `.dmg`, ad-hoc signed, smoke test OK on RP01 (5 s warm, ~40 s first run).
 35. (`a237f04`, fixes `f80f111` `71a5723` `e3b3191`) Packaging step 3: `.github/workflows/release.yml` + release notes.

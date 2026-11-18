@@ -50,7 +50,7 @@ Build a standalone app for this machine (output in `dist/`):
 ```bash
 pyinstaller --clean --noconfirm cortexui.spec   # macOS: CortexUI.app; Windows: CortexUI/CortexUI.exe
 packaging/make_dmg.sh                           # macOS: CortexUI-<version>-macOS-<arch>.dmg
-python packaging/make_icons.py                  # only when the icon changes (writes assets/)
+python packaging/make_icons.py                  # only when assets/logo.png changes (writes the icons)
 ```
 
 **Making a release:** set `APP_VERSION` in `version.py`, merge into `main`, then tag it (`git tag v1.0.0 && git push origin v1.0.0`). The **Build** workflow (`.github/workflows/release.yml`) builds and smoke-tests the app on Windows, an Apple silicon Mac and an Intel Mac, then creates a draft release with the three files and `packaging/release_notes.md`; publish it on GitHub. The same workflow runs on pull requests into `main` and on `release/**` branches without releasing. Release files come from the workflow: a local build runs only on the kind of machine that built it.
