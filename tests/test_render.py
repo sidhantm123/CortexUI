@@ -33,6 +33,20 @@ class TestDecimation(unittest.TestCase):
         self.assertEqual(d[1].min(), -4.0)
         self.assertTrue(np.all(np.diff(dt) >= 0))
 
+    def test_no_bin_is_wider_than_the_others(self):
+        # 83,100 samples was the reported view (2.77 s at 30 kHz): its last 3,100 samples were
+        # drawn as one straight line to the edge
+        rng = np.random.default_rng(1)
+        for n in [83100] + list(rng.integers(8001, 400000, 40)):
+            t = np.arange(n) / 30000.0
+            x = rng.standard_normal((1, n))
+            d, dt = decimate_for_display(x, t, target_points=8000)
+            spb = -(-n // 4000)
+            self.assertLessEqual(dt.size, 8000, n)
+            self.assertEqual(dt[-1], t[-1])
+            self.assertLessEqual(np.diff(dt).max(), spb / 30000.0 + 1e-12, n)  # no long straight segment
+            self.assertEqual((d.max(), d.min()), (x.max(), x.min()))
+
     def test_exact_multiple_is_unchanged(self):
         t = np.arange(8000) / 1000.0
         x = np.sin(t)[None, :]

@@ -45,13 +45,11 @@ def decimate_for_display(
         # and troughs are preserved in the rendered waveform.
         n_bins = max(2, target_points // 2)
 
-        # Reshape the largest exact multiple of n_bins; the samples left over (up to
-        # n_bins - 1, the end of the view) form one last, shorter bin.
-        spb = n_samples // n_bins          # samples per bin
-        if spb < 1:
-            if was_1d:
-                return data[0], time_axis
-            return data, time_axis
+        # Bins of spb = ceil(n / n_bins) samples cover all but fewer than spb samples (the end of
+        # the view), which form one last, shorter bin. With spb = n // n_bins the leftover could
+        # be thousands of samples: dropped, or drawn as one straight line.
+        spb = -(-n_samples // n_bins)      # samples per bin
+        n_bins = n_samples // spb          # full bins
         n_complete = n_bins * spb
         tail = n_samples > n_complete
         n_out = n_bins + int(tail)
