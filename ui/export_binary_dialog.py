@@ -21,6 +21,7 @@ from PySide6.QtWidgets import (
 from models import StreamState
 from .channel_spec import format_channel_spec, parse_channel_spec
 from . import theme
+from .help_text import explain
 
 
 class ExportBinaryDialog(QDialog):
@@ -65,6 +66,7 @@ class ExportBinaryDialog(QDialog):
         self._range_btn_grp.addButton(self._range_full)
         range_layout.addWidget(self._range_view)
         range_layout.addWidget(self._range_full)
+        explain("export.range", self._range_view, self._range_full)
         layout.addWidget(range_group)
 
         # ── Processing stage ─────────────────────────────────────────────────
@@ -77,6 +79,7 @@ class ExportBinaryDialog(QDialog):
         self._blank_check.setChecked(bool(self._blanking_desc))
         self._blank_check.setEnabled(bool(self._blanking_desc))
         proc_layout.addWidget(self._blank_check)
+        explain("export.blanking", self._blank_check)
         self._filter_check = QCheckBox(
             f"Apply filter chain  ({self._filters_desc})" if self._filters_desc
             else "Apply filter chain  (no active filters)"
@@ -84,6 +87,7 @@ class ExportBinaryDialog(QDialog):
         self._filter_check.setChecked(bool(self._filters_desc))
         self._filter_check.setEnabled(bool(self._filters_desc))
         proc_layout.addWidget(self._filter_check)
+        explain("export.filters", self._filter_check)
         self._stale_note = QLabel(
             f'<span style="color:{theme.ERROR};">{html.escape(", ".join(self._stale))} blanking is out of date (events or '
             "settings changed since Apply). Export will use the last applied blanking — cancel and click "
@@ -122,6 +126,7 @@ class ExportBinaryDialog(QDialog):
         )
         row.addWidget(shown_btn)
         ch_layout.addLayout(row)
+        explain("export.channels", self._ch_edit, all_btn, shown_btn)
         self._ch_preview = QLabel("")
         self._ch_preview.setWordWrap(True)
         ch_layout.addWidget(self._ch_preview)
@@ -131,15 +136,15 @@ class ExportBinaryDialog(QDialog):
         # ── Scale factor ──────────────────────────────────────────────────────
         scale_group = QGroupBox("Scale Factor")
         scale_layout = QVBoxLayout(scale_group)
-        scale_layout.addWidget(
-            QLabel("Multiply data by (e.g. 1e6 converts V → µV):")
-        )
+        scale_label = QLabel("Multiply data by (e.g. 1e6 converts V → µV):")
+        scale_layout.addWidget(scale_label)
         self._scale_spin = QDoubleSpinBox()
         self._scale_spin.setDecimals(0)
         self._scale_spin.setRange(1, 1_000_000_000)
         self._scale_spin.setValue(1_000_000)
         self._scale_spin.setSingleStep(1_000_000)
         scale_layout.addWidget(self._scale_spin)
+        explain("export.scale", scale_label, self._scale_spin)
         layout.addWidget(scale_group)
 
         # ── Format options ────────────────────────────────────────────────────
@@ -147,19 +152,23 @@ class ExportBinaryDialog(QDialog):
         fmt_layout = QVBoxLayout(fmt_group)
 
         layout_row = QHBoxLayout()
-        layout_row.addWidget(QLabel("Sample layout:"))
+        layout_label = QLabel("Sample layout:")
+        layout_row.addWidget(layout_label)
         self._layout_combo = QComboBox()
         self._layout_combo.addItem("Interlaced (default, recommended)", "interlaced")
         self._layout_combo.addItem("Channel-sequential", "sequential")
         layout_row.addWidget(self._layout_combo)
+        explain("export.layout", layout_label, self._layout_combo)
         fmt_layout.addLayout(layout_row)
 
         ext_row = QHBoxLayout()
-        ext_row.addWidget(QLabel("File extension:"))
+        ext_label = QLabel("File extension:")
+        ext_row.addWidget(ext_label)
         self._ext_combo = QComboBox()
         self._ext_combo.addItem(".i16  (TDT standard)", ".i16")
         self._ext_combo.addItem(".bin  (Kilosort / Plexon Offline Sorter)", ".bin")
         ext_row.addWidget(self._ext_combo)
+        explain("export.extension", ext_label, self._ext_combo)
         fmt_layout.addLayout(ext_row)
 
         layout.addWidget(fmt_group)

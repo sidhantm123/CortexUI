@@ -49,6 +49,8 @@ pyinstaller --clean tdt_viewer.spec
 
 ## Usage
 
+**Every setting is explained:** hover it (the box or its label) for what it does and its default, or open **Help → Settings Guide** (F1 on Windows, ⌘? on macOS) for all of them by tab, with search.
+
 1. **Open** a recording folder (or drop it on the window). The left panel shows the block's name (hover for the full name and path), duration and stream count, and lists its streams with channel counts and sample rates; click a stream to display it. **View → Show Recording Panel** (⌘1 / Ctrl+1) hides or shows the panel. Messages (exports, detections, warnings) appear briefly at the bottom of the plots; click one to dismiss it.
 2. **Numbering**: channels are numbered by **electrode** by default (the trailing number of each label, e.g. `elec1-10` → electrode 10), everywhere in the app. **View → Number Channels By → Channel** switches to recording order (Ch 1 = first channel in the file). If a recording's labels have no unique electrode numbers (e.g. TDT), channel numbers are used.
 3. **Channels tab**: choose single or overlay mode, set the view range and toggle scatter (dot) mode. The header above the plot names the electrode (e.g. `Elec 10 · Ch 125 · elec1-10`), shows chips for the applied blanking and filters (amber = out of date or bypassed; hover for details), and the **RMS** of the visible data per trace (blanked samples excluded).

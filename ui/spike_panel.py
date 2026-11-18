@@ -16,6 +16,7 @@ from PySide6.QtWidgets import (
 
 from models import StreamState
 from dsp.spikes import NEGATIVE, POSITIVE, BOTH
+from .help_text import explain
 from .theme import set_role, set_primary
 
 
@@ -44,12 +45,6 @@ class SpikePanel(QWidget):
         self._k_spin.setDecimals(2)
         self._k_spin.setSingleStep(0.25)
         self._k_spin.setSuffix(" σ")
-        self._k_spin.setToolTip(
-            "Spikes are crossings of k × σ. σ = median(|x|) / 0.6745 of the filtered, blanked data "
-            "in view (blanked samples excluded): a noise estimate that spikes barely affect, unlike "
-            "the RMS (shown in the plot header), which spikes and artifacts inflate. "
-            "Drag the dashed line on the plot to change k."
-        )
         self._k_spin.valueChanged.connect(self._on_changed)
         form.addRow("Threshold (k × σ):", self._k_spin)
 
@@ -65,13 +60,16 @@ class SpikePanel(QWidget):
         self._refractory_spin.setDecimals(1)
         self._refractory_spin.setSingleStep(0.5)
         self._refractory_spin.setSuffix(" ms")
-        self._refractory_spin.setToolTip("Crossings closer than this to the previous spike are not counted")
         self._refractory_spin.valueChanged.connect(self._on_changed)
         form.addRow("Refractory:", self._refractory_spin)
         layout.addWidget(group)
+        for key, field in (("spike.k", self._k_spin), ("spike.polarity", self._polarity_combo),
+                           ("spike.refractory", self._refractory_spin)):
+            explain(key, field, form.labelForField(field))
 
         self._everywhere_check = QCheckBox("Show threshold line on other tabs too")
         self._everywhere_check.toggled.connect(self._on_changed)
+        explain("spike.everywhere", self._everywhere_check)
         layout.addWidget(self._everywhere_check)
 
         self._hint_label = QLabel("")
@@ -80,10 +78,7 @@ class SpikePanel(QWidget):
         layout.addWidget(self._hint_label)
 
         self._detect_btn = QPushButton("Detect Spikes (whole recording)")
-        self._detect_btn.setToolTip(
-            "Freezes each electrode's σ from the current view, then finds threshold crossings "
-            "across the whole recording (with the current blanking and filters)."
-        )
+        explain("spike.detect", self._detect_btn)
         self._detect_btn.clicked.connect(self.detect_requested.emit)
         set_primary(self._detect_btn)
         layout.addWidget(self._detect_btn)

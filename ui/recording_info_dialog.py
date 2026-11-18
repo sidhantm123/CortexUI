@@ -16,6 +16,7 @@ from PySide6.QtWidgets import (
 
 from models.recording import RecordingBlock
 from blackrock_io.ccf_reader import PREFERRED_FIELDS
+from .help_text import explain
 
 
 class RecordingInfoDialog(QDialog):
@@ -88,6 +89,7 @@ class RecordingInfoDialog(QDialog):
 
         self._all_fields_check = QCheckBox("Show all fields")
         self._all_fields_check.toggled.connect(self._populate_table)
+        explain("info.all_fields", self._all_fields_check)
         group_layout.addWidget(self._all_fields_check)
 
         self._table = QTableWidget()

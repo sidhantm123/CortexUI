@@ -18,6 +18,7 @@ from PySide6.QtWidgets import (
 )
 
 from models import StreamState
+from .help_text import explain
 from .theme import set_role
 
 
@@ -59,6 +60,7 @@ class SpectrumPanel(QWidget):
         self._method_combo.addItem("PSD (Welch)", "psd")
         self._method_combo.currentIndexChanged.connect(self._on_method_changed)
         method_layout.addWidget(self._method_combo)
+        explain("analysis.method", self._method_combo)
 
         layout.addWidget(method_group)
 
@@ -69,11 +71,13 @@ class SpectrumPanel(QWidget):
         # Enable selection on plot
         self._enable_selection_check = QCheckBox("Select on plot")
         self._enable_selection_check.stateChanged.connect(self._on_selection_toggled)
+        explain("analysis.select_on_plot", self._enable_selection_check)
         interval_layout.addWidget(self._enable_selection_check)
 
         # Start time
         start_row = QHBoxLayout()
-        start_row.addWidget(QLabel("Start (s):"))
+        start_label = QLabel("Start (s):")
+        start_row.addWidget(start_label)
         self._start_spin = QDoubleSpinBox()
         self._start_spin.setDecimals(3)
         self._start_spin.setMinimum(0)
@@ -83,7 +87,8 @@ class SpectrumPanel(QWidget):
 
         # End time
         end_row = QHBoxLayout()
-        end_row.addWidget(QLabel("End (s):"))
+        end_label = QLabel("End (s):")
+        end_row.addWidget(end_label)
         self._end_spin = QDoubleSpinBox()
         self._end_spin.setDecimals(3)
         self._end_spin.setMinimum(0)
@@ -92,6 +97,7 @@ class SpectrumPanel(QWidget):
         interval_layout.addLayout(end_row)
 
         layout.addWidget(interval_group)
+        explain("analysis.interval", start_label, self._start_spin, end_label, self._end_spin)
 
         # Frequency range shown in the Spectrum plot
         band_group = QGroupBox("Frequency Range")
@@ -100,7 +106,9 @@ class SpectrumPanel(QWidget):
         self._fmax_spin = QDoubleSpinBox()
         for label, spin in (("Min (Hz):", self._fmin_spin), ("Max (Hz):", self._fmax_spin)):
             row = QHBoxLayout()
-            row.addWidget(QLabel(label))
+            label = QLabel(label)
+            explain("analysis.band", label, spin)
+            row.addWidget(label)
             spin.setDecimals(1)
             spin.setRange(0.0, 15000.0)
             spin.setKeyboardTracking(False)  # one update per typed number
@@ -127,6 +135,7 @@ class SpectrumPanel(QWidget):
         self._channel_list.setMaximumHeight(80)
         self._channel_list.setEnabled(False)
         channel_layout.addWidget(self._channel_list)
+        explain("analysis.channels", self._use_all_check, self._channel_list)
 
         layout.addWidget(channel_group)
 
@@ -135,21 +144,25 @@ class SpectrumPanel(QWidget):
         psd_layout = QVBoxLayout(self._psd_group)
 
         nperseg_row = QHBoxLayout()
-        nperseg_row.addWidget(QLabel("Segment size:"))
+        nperseg_label = QLabel("Segment size:")
+        nperseg_row.addWidget(nperseg_label)
         self._nperseg_spin = QSpinBox()
         self._nperseg_spin.setRange(64, 16384)
         self._nperseg_spin.setValue(1024)
         self._nperseg_spin.setSingleStep(64)
         nperseg_row.addWidget(self._nperseg_spin)
+        explain("analysis.segment", nperseg_label, self._nperseg_spin)
         psd_layout.addLayout(nperseg_row)
 
         overlap_row = QHBoxLayout()
-        overlap_row.addWidget(QLabel("Overlap:"))
+        overlap_label = QLabel("Overlap:")
+        overlap_row.addWidget(overlap_label)
         self._overlap_spin = QDoubleSpinBox()
         self._overlap_spin.setRange(0, 0.99)
         self._overlap_spin.setValue(0.5)
         self._overlap_spin.setSingleStep(0.1)
         overlap_row.addWidget(self._overlap_spin)
+        explain("analysis.overlap", overlap_label, self._overlap_spin)
         psd_layout.addLayout(overlap_row)
 
         layout.addWidget(self._psd_group)
