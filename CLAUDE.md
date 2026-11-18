@@ -11,9 +11,9 @@ delete details that the code or git history already records.
 | | |
 |---|---|
 | Active branch | `release/v1.0` (from `main` @ `cb5b2dc`, after PR #5 merged the settings help) |
-| Last commit | Packaging step 2: icon, `cortexui.spec`, `make_dmg.sh` |
+| Last commit | Packaging step 3: `.github/workflows/release.yml`, `packaging/release_notes.md` |
 | Tests | 202 passing: `tdtgui/bin/python -m unittest discover tests` |
-| Next step | Packaging step 3: `.github/workflows/release.yml` + release notes (§4) |
+| Next step | Packaging step 3: first CI run on the three runners; then step 4 (§4) |
 
 ### Done
 1. Analog events (`78664d0`), editable onset/offset (`7b559ef`), Blanking tab Basic/Advanced (`e60ac42`).
@@ -137,7 +137,7 @@ delete details that the code or git history already records.
     `main.py --smoke-test FOLDER` opens the folder in the real window and exits 0 once the first processed buffer
     is in, or 1 on an error box, error toast, uncaught exception or 60 s; it prints the result, or (no console:
     the windowed Windows app) writes a failure to `error.log`. `tests/test_smoke.py` runs it in a subprocess.
-34. Packaging step 2: `packaging/make_icons.py` draws the icon with Qt (three channels, the middle one spiking in the
+34. (`2bec03c`) Packaging step 2: `packaging/make_icons.py` draws the icon with Qt (three channels, the middle one spiking in the
     accent; grey traces only from 48 px) → `assets/icon.png`, `.ico` (PNG entries, no Pillow), `.icns` (iconutil);
     window icon outside macOS. `cortexui.spec` (replaces `tdt_viewer.spec`; `upx=False`, `h5py` excluded,
     `LSMinimumSystemVersion` 14.0) and `packaging/make_dmg.sh` (ditto + Applications link, hdiutil UDZO, retries).
@@ -418,9 +418,11 @@ Decisions: name CortexUI, generated icon, repo stays public, releases at `…/Co
 1–2. Name, `version.py`, `--smoke-test`; icon, spec, `.dmg`: done (§1 items 33–34).
    **Minimum macOS 14:** numpy/scipy install as `macosx_14_0` wheels (PySide6's say 13). **Release builds come
    from the CI only:** this Mac's Homebrew Python bundles its own libssl/liblzma built for macOS 26.
-3. `.github/workflows/release.yml`: PRs build + smoke test; `v*` tags also `gh release create --draft`; runners
-   `windows-latest`, `macos-latest` (arm64), `macos-15-intel`; `packaging/release_notes.md` (unsigned first launch).
-   Pushing a workflow needs the `workflow` scope on the stored credential.
+3. `.github/workflows/release.yml` (workflow "Build"): pushes to `release/**`, PRs into `main` and manual runs build
+   and smoke-test; a `v*` tag (must equal `version.py`) also runs `gh release create --draft` with the three files
+   and `packaging/release_notes.md` (which file, unsigned first launch, error.log). Runners `windows-latest`,
+   `macos-latest` (macOS 26 arm64), `macos-15-intel`; actions checkout@v7, setup-python@v7, upload@v7, download@v8.
+   Run status is public: `api.github.com/repos/sidhantm123/CortexUI/actions/runs`.
 4. README Download/Build, PR (CI green on all three), then tag `v1.0.0` with the user's OK; the user publishes.
 
 ### Audit fixes (approved 2026-11-17): all 11 steps done (§1 items 13, 14, 16–24)
