@@ -37,6 +37,7 @@ hiddenimports += collect_submodules('neo.rawio')
 # Data files
 datas = []
 datas += collect_data_files('pyqtgraph')
+datas += [('ui/assets', 'ui/assets')]  # theme images (checkmark)
 
 # Try to collect tdt data files if available
 try:

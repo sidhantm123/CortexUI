@@ -6,12 +6,14 @@ from typing import Dict, List, Optional
 
 import numpy as np
 
+UNWIRED = -1  # channel_idx of a contact that is not connected to any recording channel
+
 
 @dataclass
 class ProbeContact:
     """Single electrode contact on a probe."""
 
-    channel_idx: int   # 0-indexed (device_channel_indices[i] - 1)
+    channel_idx: int   # 0-based recording channel (probeinterface device_channel_indices); UNWIRED = -1
     contact_id: str    # string ID from probe file
     x_um: float        # x-position in µm
     y_um: float        # y-position in µm
@@ -32,8 +34,14 @@ class ProbeGeometry:
     si_units: str = "µm"
 
     @classmethod
-    def from_probeinterface_dict(cls, data: dict) -> "ProbeGeometry":
-        """Parse from a probeinterface JSON dict (reads first probe entry)."""
+    def from_probeinterface_dict(cls, data: dict, one_based: bool = False) -> "ProbeGeometry":
+        """
+        Parse from a probeinterface JSON dict (reads first probe entry).
+
+        device_channel_indices are 0-based, and -1 marks a contact that is not connected
+        (probeinterface's convention). one_based: sessions saved before 2026-11-18 stored
+        them 1-based. Without device_channel_indices, contact i is channel i.
+        """
         probes = data.get("probes", [])
         if not probes:
             raise ValueError("No probes found in probeinterface data")
@@ -48,7 +56,11 @@ class ProbeGeometry:
 
         contacts: List[ProbeContact] = []
         for i, pos in enumerate(positions):
-            ch_idx = int(device_ch[i]) - 1 if i < len(device_ch) else i
+            if i < len(device_ch):
+                ch_idx = int(device_ch[i]) - (1 if one_based else 0)
+                ch_idx = UNWIRED if ch_idx < 0 else ch_idx
+            else:
+                ch_idx = i
             c_id = str(contact_ids[i]) if i < len(contact_ids) else str(i + 1)
             shank = str(shank_ids[i]) if i < len(shank_ids) else "0"
             radius = (
@@ -95,9 +107,7 @@ class ProbeGeometry:
                     "contact_shape_params": [
                         {"radius": c.radius_um} for c in self.contacts
                     ],
-                    "device_channel_indices": [
-                        c.channel_idx + 1 for c in self.contacts
-                    ],
+                    "device_channel_indices": [c.channel_idx for c in self.contacts],  # 0-based, -1 unwired
                     "contact_ids": [c.contact_id for c in self.contacts],
                     "shank_ids": [c.shank_id for c in self.contacts],
                 }
@@ -107,10 +117,11 @@ class ProbeGeometry:
     # ── Queries ──────────────────────────────────────────────────────────────
 
     def get_shank_groups(self) -> Dict[str, List[int]]:
-        """Return shank_id → sorted list of 0-indexed channel indices."""
+        """Return shank_id → sorted list of 0-indexed channel indices (unwired contacts left out)."""
         groups: Dict[str, List[int]] = {}
         for c in self.contacts:
-            groups.setdefault(c.shank_id, []).append(c.channel_idx)
+            if c.channel_idx != UNWIRED:
+                groups.setdefault(c.shank_id, []).append(c.channel_idx)
         return {k: sorted(v) for k, v in sorted(groups.items())}
 
     def get_channel_positions(self) -> np.ndarray:
@@ -123,6 +134,8 @@ class ProbeGeometry:
 
     def get_contact_by_channel(self, ch_idx: int) -> Optional[ProbeContact]:
         """Find contact by 0-indexed channel index. Returns None if not found."""
+        if ch_idx == UNWIRED:
+            return None
         for c in self.contacts:
             if c.channel_idx == ch_idx:
                 return c

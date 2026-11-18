@@ -19,7 +19,8 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from models.probe import ProbeContact, ProbeGeometry
+from models.probe import UNWIRED, ProbeContact, ProbeGeometry
+from .theme import set_role, set_primary
 
 
 # ── helpers ───────────────────────────────────────────────────────────────────
@@ -27,13 +28,16 @@ from models.probe import ProbeContact, ProbeGeometry
 _COLUMNS = ["Ch (1-based)", "X (µm)", "Y (µm)", "Shank ID", "Radius (µm)"]
 
 
+UNWIRED_TEXT = "–"  # Ch column of a contact that is not connected
+
+
 def _geometry_to_rows(geo: ProbeGeometry) -> list:
-    """Convert ProbeGeometry to a list of row value tuples."""
+    """Convert ProbeGeometry to a list of row value tuples (unwired contacts last)."""
     rows = []
-    for c in sorted(geo.contacts, key=lambda c: c.channel_idx):
+    for c in sorted(geo.contacts, key=lambda c: (c.channel_idx < 0, c.channel_idx)):
         rows.append(
             (
-                str(c.channel_idx + 1),  # 1-indexed display
+                str(c.channel_idx + 1) if c.channel_idx >= 0 else UNWIRED_TEXT,  # 1-based display
                 f"{c.x_um:.4f}",
                 f"{c.y_um:.4f}",
                 c.shank_id,
@@ -51,16 +55,19 @@ def _rows_to_geometry(rows: list) -> ProbeGeometry:
         label = f"Row {row_idx + 1}"
         ch_str, x_str, y_str, shank_str, r_str = row
 
-        try:
-            ch_1based = int(ch_str)
-        except ValueError:
-            raise ValueError(f"{label}: Channel must be an integer, got '{ch_str}'")
-        if ch_1based < 1:
-            raise ValueError(f"{label}: Channel must be ≥ 1, got {ch_1based}")
-        ch_idx = ch_1based - 1
-        if ch_idx in seen_channels:
-            raise ValueError(f"{label}: Duplicate channel index {ch_1based}")
-        seen_channels.add(ch_idx)
+        if ch_str.strip() in (UNWIRED_TEXT, "-", ""):
+            ch_idx, ch_1based = UNWIRED, None  # contact not connected
+        else:
+            try:
+                ch_1based = int(ch_str)
+            except ValueError:
+                raise ValueError(f"{label}: Channel must be an integer or '{UNWIRED_TEXT}', got '{ch_str}'")
+            if ch_1based < 1:
+                raise ValueError(f"{label}: Channel must be ≥ 1, got {ch_1based}")
+            ch_idx = ch_1based - 1
+            if ch_idx in seen_channels:
+                raise ValueError(f"{label}: Duplicate channel index {ch_1based}")
+            seen_channels.add(ch_idx)
 
         try:
             x = float(x_str)
@@ -80,7 +87,7 @@ def _rows_to_geometry(rows: list) -> ProbeGeometry:
         contacts.append(
             ProbeContact(
                 channel_idx=ch_idx,
-                contact_id=str(ch_1based),
+                contact_id=str(ch_1based if ch_1based is not None else f"u{row_idx + 1}"),
                 x_um=x,
                 y_um=y,
                 shank_id=shank,
@@ -194,7 +201,7 @@ class ProbeImportDialog(QDialog):
 
         # Status label
         self._status = QLabel("")
-        self._status.setStyleSheet("color: gray; font-size: 11px;")
+        set_role(self._status, "secondary")
         layout.addWidget(self._status)
 
         # Buttons
@@ -207,7 +214,11 @@ class ProbeImportDialog(QDialog):
         layout.addWidget(self._btn_box)
 
         self._ok_btn = self._btn_box.button(QDialogButtonBox.StandardButton.Ok)
-        self._ok_btn.setEnabled(False)
+        self._tabs.currentChanged.connect(self._update_ok)
+        model = self._edit_table.model()
+        model.rowsInserted.connect(self._update_ok)
+        model.rowsRemoved.connect(self._update_ok)
+        self._update_ok()
 
     def _make_json_tab(self) -> QWidget:
         tab = QWidget()
@@ -226,7 +237,7 @@ class ProbeImportDialog(QDialog):
 
         # Info label
         self._json_info = QLabel("")
-        self._json_info.setStyleSheet("font-size: 11px; color: #444;")
+        set_role(self._json_info, "secondary")
         layout.addWidget(self._json_info)
 
         # Preview table
@@ -251,7 +262,7 @@ class ProbeImportDialog(QDialog):
         bar.addWidget(import_btn)
         bar.addStretch()
         add_btn = QPushButton("+ Add Row")
-        add_btn.clicked.connect(self._edit_table.append_row)
+        add_btn.clicked.connect(lambda: self._edit_table.append_row())  # not clicked(checked)
         bar.addWidget(add_btn)
         remove_btn = QPushButton("− Remove Row")
         remove_btn.clicked.connect(self._edit_table.remove_selected)
@@ -261,8 +272,8 @@ class ProbeImportDialog(QDialog):
         layout.addWidget(self._edit_table)
 
         # Hint
-        hint = QLabel("Ch is 1-indexed (Ch 1 = TDT channel 0 internally).")
-        hint.setStyleSheet("color: gray; font-size: 10px;")
+        hint = QLabel(f"Ch is the recording channel, 1 = the first channel in the file; {UNWIRED_TEXT} = not connected.")
+        set_role(hint, "secondary")
         layout.addWidget(hint)
 
         return tab
@@ -309,8 +320,15 @@ class ProbeImportDialog(QDialog):
             self._edit_table.load(rows)
 
         self._geometry = geo
-        self._ok_btn.setEnabled(True)
+        self._update_ok()
         self._set_status(f"Loaded {len(rows)} contacts from {path}")
+
+    def _update_ok(self, *_):
+        """OK needs a parsed file on the JSON tab, or at least one row on the table tab."""
+        if self._tabs.currentIndex() == 0:
+            self._ok_btn.setEnabled(self._geometry is not None)
+        else:
+            self._ok_btn.setEnabled(self._edit_table.rowCount() > 0)
 
     def _on_accept(self):
         # Determine which tab is active

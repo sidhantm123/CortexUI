@@ -17,7 +17,8 @@ def compute_fft(
         data: Input data (1D for single channel or 2D with channels as rows)
         fs: Sampling frequency in Hz
         window: Window function name (scipy.signal.get_window compatible)
-        normalize: If True, normalize by number of samples
+        normalize: If True, scale to amplitude: a sine of amplitude A reads A at its
+                   frequency (the window's coherent gain is divided out)
 
     Returns:
         Tuple of (frequencies, magnitudes) where:
@@ -50,10 +51,12 @@ def compute_fft(
     magnitudes = np.abs(fft_result)
 
     if normalize:
-        magnitudes = magnitudes / n_samples
-        # Double the magnitude for non-DC and non-Nyquist components
-        # to account for the negative frequencies
-        magnitudes[:, 1:-1] *= 2
+        # Divide by the window's sum, not n: a Hann window halves the amplitude otherwise
+        magnitudes = magnitudes / win.sum()
+        # One-sided spectrum: double every bin except DC, and Nyquist (only exists for even n)
+        magnitudes[:, 1:] *= 2
+        if n_samples % 2 == 0:
+            magnitudes[:, -1] /= 2
 
     if was_1d:
         return freqs, magnitudes[0]

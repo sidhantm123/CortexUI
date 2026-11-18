@@ -4,6 +4,7 @@ from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 import numpy as np
 
+from models.analog import is_analog_label
 from models.recording import StreamInfo, RecordingBlock
 from .ccf_reader import read_ccf, ccf_labels, find_ccf
 
@@ -22,15 +23,70 @@ _UNIT_TO_VOLTS = {"uv": 1e-6, "µv": 1e-6, "μv": 1e-6, "mv": 1e-3, "v": 1.0, "n
 GAP_TOLERANCE_MS = 1.0
 
 
+# Direct reads go through the file in blocks of about this many bytes (all channels of a
+# block are read, then the requested ones kept), so temporaries stay small
+_READ_BLOCK_BYTES = 16 * 1024 * 1024
+
+
 class _NsxStream:
     """One continuous segment of one .nsX file."""
 
-    def __init__(self, rawio, seg_index: int, sample_rate: float, num_samples: int, to_volts: np.ndarray):
+    def __init__(self, rawio, seg_index: int, sample_rate: float, num_samples: int, to_volts: np.ndarray,
+                 nsx_nb: int):
         self.rawio = rawio
         self.seg_index = seg_index
         self.sample_rate = sample_rate
         self.num_samples = num_samples
         self.to_volts = to_volts
+        self.nsx_nb = nsx_nb
+        self._layout = None  # (filename, byte offset of sample 0, bytes per sample row), or False
+
+    def file_layout(self):
+        """
+        Where this segment's samples sit in the file, when they are one plain block of int16
+        rows (samples x all channels): (filename, offset, row_bytes). None otherwise (e.g.
+        per-sample timestamped files), in which case neo's memory map is used.
+
+        Reading that block with ordinary file reads is ~7x faster on a cold disk than
+        neo's memory map (which takes a page fault per 16 KB): RP01, 20 s of one channel,
+        1.16 s → 0.16 s.
+        """
+        if self._layout is None:
+            self._layout = False
+            try:
+                arr = self.rawio.nsx_datas[self.nsx_nb][self.seg_index]
+                mm = arr
+                while mm is not None and not isinstance(mm, np.memmap):
+                    mm = getattr(mm, "base", None)
+                if (
+                    mm is not None and mm.filename
+                    and arr.dtype == np.dtype("<i2") and arr.ndim == 2
+                    and arr.strides == (arr.shape[1] * 2, 2)
+                ):
+                    offset = mm.offset + (arr.__array_interface__["data"][0] - mm.__array_interface__["data"][0])
+                    self._layout = (str(mm.filename), int(offset), arr.shape[1] * 2)
+            except Exception:
+                self._layout = False
+        return self._layout or None
+
+    def read_counts(self, i_start: int, i_stop: int, channels: List[int]) -> np.ndarray:
+        """Raw int16 samples [i_start, i_stop) x channels, read straight from the file."""
+        filename, offset, row_bytes = self.file_layout()
+        n_all = row_bytes // 2
+        n = i_stop - i_start
+        out = np.empty((n, len(channels)), dtype=np.int16)
+        cols = np.asarray(channels)
+        block = max(1, _READ_BLOCK_BYTES // row_bytes)
+        with open(filename, "rb") as f:
+            f.seek(offset + i_start * row_bytes)
+            for a in range(0, n, block):
+                b = min(n, a + block)
+                rows = np.fromfile(f, dtype="<i2", count=(b - a) * n_all)
+                got = rows.size // n_all
+                out[a: a + got] = rows[: got * n_all].reshape(got, n_all)[:, cols]
+                if got < b - a:  # file shorter than its header says
+                    return out[: a + got]
+        return out
 
 
 class BlackrockReader:
@@ -65,6 +121,9 @@ class BlackrockReader:
         folder holds several recordings. Recordings with pauses are split into one
         stream per segment ("ns5_seg2").
 
+        A .ccf or .nsX file that can't be read is skipped and described in
+        metadata["notes"]; the folder fails only when no .nsX file is readable.
+
         Raises:
             ImportError: If neo package not available
             FileNotFoundError: If folder doesn't exist
@@ -93,9 +152,16 @@ class BlackrockReader:
         multiple_bases = len(nsx_by_base) > 1
         main_base = next(iter(nsx_by_base))
 
+        notes: List[str] = []  # files that could not be used (shown after Open)
+
         # Channel labels from the .ccf override the .nsX header labels
         ccf_path = find_ccf(folder, main_base)
-        ccf = read_ccf(str(ccf_path)) if ccf_path else None
+        ccf = None
+        if ccf_path:
+            try:
+                ccf = read_ccf(str(ccf_path))
+            except Exception as e:
+                notes.append(f"{ccf_path.name} could not be read ({e}); channel labels come from the .nsX headers.")
         ccf_label_map = ccf_labels(ccf) if ccf else {}
 
         streams: Dict[str, StreamInfo] = {}
@@ -113,9 +179,11 @@ class BlackrockReader:
                         load_nev=False,
                         gap_tolerance_ms=GAP_TOLERANCE_MS,
                     )
+                    _only_nsx(rawio, nb)
                     rawio.parse_header()
                 except Exception as e:
-                    raise ValueError(f"Failed to read {file_label}: {e}")
+                    notes.append(f"{file_label} could not be read and was skipped ({e}).")
+                    continue
 
                 if rawio.signal_streams_count() == 0:
                     continue
@@ -124,6 +192,10 @@ class BlackrockReader:
                 labels = [
                     ccf_label_map.get(_int_or_none(ch_id), name) or name
                     for name, ch_id in zip(channels["name"], channels["id"])
+                ]
+                analog = [
+                    i for i, (label, ch_id) in enumerate(zip(labels, channels["id"]))
+                    if is_analog_label(label, _int_or_none(ch_id))
                 ]
                 to_volts = np.array(
                     [_UNIT_TO_VOLTS.get(str(u).strip().lower(), 1.0) for u in channels["units"]]
@@ -138,7 +210,7 @@ class BlackrockReader:
                         continue
 
                     name = stream_base if n_segments == 1 else f"{stream_base}_seg{seg + 1}"
-                    self._streams[name] = _NsxStream(rawio, seg, fs, n_samples, to_volts)
+                    self._streams[name] = _NsxStream(rawio, seg, fs, n_samples, to_volts, nb)
 
                     duration = n_samples / fs
                     t_start = float(rawio.get_signal_t_start(0, seg, 0))
@@ -153,12 +225,14 @@ class BlackrockReader:
                         num_samples=n_samples,
                         dtype="int16",
                         channel_labels=list(labels),
+                        analog_channels=list(analog),
                     )
 
         if not streams:
             raise ValueError(
                 "No continuous data found in the .nsX files. "
                 "Ensure the folder contains valid Blackrock recording data."
+                + ("\n\n" + "\n".join(notes) if notes else "")
             )
 
         start_time = min(t_starts)
@@ -176,6 +250,7 @@ class BlackrockReader:
             metadata={
                 "ccf": ccf,
                 "files": [f"{b}.ns{nb}" for b, nbs in nsx_by_base.items() for nb in nbs],
+                "notes": notes,
             },
         )
 
@@ -187,6 +262,7 @@ class BlackrockReader:
         channels: Optional[List[int]] = None,
         start_time: Optional[float] = None,
         end_time: Optional[float] = None,
+        dtype=np.float64,
     ) -> Tuple[np.ndarray, np.ndarray]:
         """
         Get stream data for specified channels and time range.
@@ -196,6 +272,8 @@ class BlackrockReader:
             channels: List of channel indices (0-based). None = all channels.
             start_time: Start time in seconds from the stream start. None = beginning.
             end_time: End time in seconds. None = end.
+            dtype: float64 (default) or float32 (plot buffers: half the memory; the
+                   int16 samples are still represented exactly enough).
 
         Returns:
             Tuple of (data, time_axis) where:
@@ -217,8 +295,8 @@ class BlackrockReader:
         if end_time is None:
             end_time = stream.num_samples / fs
 
-        i_start = min(max(0, int(start_time * fs)), stream.num_samples)
-        i_stop = min(max(i_start, int(end_time * fs)), stream.num_samples)
+        i_start = min(max(0, _sample_index(start_time, fs)), stream.num_samples)
+        i_stop = min(max(i_start, _sample_index(end_time, fs)), stream.num_samples)
 
         if channels is None:
             valid_channels = list(range(n_channels))
@@ -228,25 +306,30 @@ class BlackrockReader:
                 raise ValueError(f"No valid channels in selection: {channels}")
 
         try:
-            raw = stream.rawio.get_analogsignal_chunk(
-                block_index=0,
-                seg_index=stream.seg_index,
-                i_start=i_start,
-                i_stop=i_stop,
-                stream_index=0,
-                channel_indexes=valid_channels,
-            )
+            if stream.file_layout() is not None:
+                raw = stream.read_counts(i_start, i_stop, valid_channels)
+            else:
+                raw = stream.rawio.get_analogsignal_chunk(
+                    block_index=0,
+                    seg_index=stream.seg_index,
+                    i_start=i_start,
+                    i_stop=i_stop,
+                    stream_index=0,
+                    channel_indexes=valid_channels,
+                )
             data = stream.rawio.rescale_signal_raw_to_float(
-                raw, dtype="float64", stream_index=0, channel_indexes=valid_channels
+                raw, dtype=np.dtype(dtype).name, stream_index=0, channel_indexes=valid_channels
             )
         except Exception as e:
             raise ValueError(f"Failed to read stream data: {e}")
 
-        # neo returns (samples, channels) in the file's units; convert to (channels, samples) volts
-        data = (data * stream.to_volts[valid_channels]).T
+        # neo returns a fresh float64 (samples, channels) array in the file's units; scale it
+        # in place, then make the (channels, samples) transpose contiguous (one copy, not two)
+        data *= stream.to_volts[valid_channels]
+        data = np.ascontiguousarray(data.T)
         time_axis = (i_start + np.arange(data.shape[1])) / fs
 
-        return np.ascontiguousarray(data), time_axis
+        return data, time_axis
 
     def get_block_info(self) -> Optional[RecordingBlock]:
         """Return current block info."""
@@ -257,6 +340,26 @@ class BlackrockReader:
         self._streams.clear()
         self._block_path = None
         self._block_info = None
+
+
+def _only_nsx(rawio, nb: int):
+    """
+    Make neo parse only the .nsX file being opened. Its parse_header() reads the headers and
+    data packets of every .nsX of the recording whatever nsx_to_load says, so one damaged file
+    made all of them unreadable (and each was parsed once per stream). Uses neo 0.14 internals
+    (set in __init__), left alone if they are missing.
+    """
+    if isinstance(getattr(rawio, "_avail_nsx", None), list) and isinstance(getattr(rawio, "_avail_files", None), dict):
+        rawio._avail_nsx = [nb]
+        for ext in rawio._avail_files:
+            if ext.startswith("ns") and ext != f"ns{nb}":
+                rawio._avail_files[ext] = False
+
+
+def _sample_index(t: float, fs: float) -> int:
+    """First sample at or after time t: floor(t * fs), allowing for rounding in t (n / fs * fs
+    can come out just below n). Callers that pass (i + 0.5) / fs get exactly i."""
+    return int(np.floor(t * fs + 1e-6))
 
 
 def _int_or_none(value) -> Optional[int]:

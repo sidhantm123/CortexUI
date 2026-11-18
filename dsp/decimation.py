@@ -45,29 +45,37 @@ def decimate_for_display(
         # and troughs are preserved in the rendered waveform.
         n_bins = max(2, target_points // 2)
 
-        # Trim to the largest exact multiple of n_bins so we can reshape.
-        spb = n_samples // n_bins          # samples per bin
-        if spb < 1:
-            if was_1d:
-                return data[0], time_axis
-            return data, time_axis
+        # Bins of spb = ceil(n / n_bins) samples cover all but fewer than spb samples (the end of
+        # the view), which form one last, shorter bin. With spb = n // n_bins the leftover could
+        # be thousands of samples: dropped, or drawn as one straight line.
+        spb = -(-n_samples // n_bins)      # samples per bin
+        n_bins = n_samples // spb          # full bins
         n_complete = n_bins * spb
+        tail = n_samples > n_complete
+        n_out = n_bins + int(tail)
 
         # Reshape → (n_channels, n_bins, spb), then min/max along last axis
         data_bins = data[:, :n_complete].reshape(n_channels, n_bins, spb)
-        min_vals = data_bins.min(axis=2)   # (n_channels, n_bins)
-        max_vals = data_bins.max(axis=2)
+        min_vals = np.empty((n_channels, n_out), dtype=data.dtype)
+        max_vals = np.empty((n_channels, n_out), dtype=data.dtype)
+        data_bins.min(axis=2, out=min_vals[:, :n_bins])
+        data_bins.max(axis=2, out=max_vals[:, :n_bins])
+        if tail:
+            min_vals[:, -1] = data[:, n_complete:].min(axis=1)
+            max_vals[:, -1] = data[:, n_complete:].max(axis=1)
 
         # Interleave: column 0 = min of bin 0, column 1 = max of bin 0, ...
-        out_data = np.empty((n_channels, n_bins * 2), dtype=data.dtype)
+        out_data = np.empty((n_channels, n_out * 2), dtype=data.dtype)
         out_data[:, 0::2] = min_vals
         out_data[:, 1::2] = max_vals
 
         # Time: start and end sample of each bin
         time_bins = time_axis[:n_complete].reshape(n_bins, spb)
-        out_time = np.empty(n_bins * 2, dtype=time_axis.dtype)
-        out_time[0::2] = time_bins[:, 0]
-        out_time[1::2] = time_bins[:, -1]
+        out_time = np.empty(n_out * 2, dtype=time_axis.dtype)
+        out_time[0:2 * n_bins:2] = time_bins[:, 0]
+        out_time[1:2 * n_bins:2] = time_bins[:, -1]
+        if tail:
+            out_time[-2:] = time_axis[n_complete], time_axis[n_samples - 1]
 
         if was_1d:
             return out_data[0], out_time

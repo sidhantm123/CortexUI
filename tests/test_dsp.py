@@ -11,7 +11,7 @@ from dsp.filters import design_filter, apply_filter_chain, apply_filter
 from dsp.decimation import decimate_for_display, calculate_decimation_factor
 from dsp.spectral import compute_fft, compute_psd
 from dsp.referencing import apply_car, apply_cmr
-from dsp.metrics import compute_vrms, apply_vrms_threshold
+from dsp.metrics import compute_vrms
 from models.filter_config import FilterConfig, FilterType
 
 
@@ -266,6 +266,16 @@ class TestSpectral(unittest.TestCase):
         self.assertEqual(magnitude.shape[0], 2)
         self.assertEqual(len(freqs), magnitude.shape[1])
 
+    def test_fft_reads_sine_amplitude(self):
+        fs = 1000.0
+        for n in (4000, 4001):  # even and odd lengths
+            t = np.arange(n) / fs
+            x = 0.5 + 3.0 * np.sin(2 * np.pi * 50.0 * t) + 1.0 * np.sin(2 * np.pi * 120.0 * t)
+            freqs, mag = compute_fft(x, fs)
+            self.assertAlmostEqual(mag[np.argmin(np.abs(freqs - 50.0))], 3.0, delta=0.02)
+            self.assertAlmostEqual(mag[np.argmin(np.abs(freqs - 120.0))], 1.0, delta=0.02)
+            self.assertAlmostEqual(mag[0], 0.5, delta=0.01)
+
     def test_multichannel_psd(self):
         """Test PSD on multi-channel data."""
         data = np.vstack([self.signal, self.signal * 0.5])
@@ -365,6 +375,24 @@ class TestCAR(unittest.TestCase):
         _, warnings = apply_car(data, groups)
         self.assertEqual(len(warnings), 1)
 
+    def test_car_rows_matches_full_car(self):
+        """car_rows re-references only the requested rows, with the same result as apply_car."""
+        from dsp.referencing import car_rows
+
+        rng = np.random.default_rng(3)
+        data = rng.standard_normal((6, 50))
+        groups = [[0, 1, 2], [3, 4]]  # channel 5 is in no group
+        full, _ = apply_car(data, groups)
+        rows, _ = car_rows(data, groups, [4, 0, 5])
+        np.testing.assert_allclose(rows, full[[4, 0, 5]], atol=1e-12)
+
+    def test_car_in_place(self):
+        """copy=False re-references the array itself (the filter chain uses this on its own copy)."""
+        data = np.array([[1.0, 2.0], [3.0, 4.0]])
+        result, _ = apply_car(data, [[0, 1]], copy=False)
+        self.assertIs(result, data)
+        np.testing.assert_allclose(data, [[-1.0, -1.0], [1.0, 1.0]])
+
 
 class TestCMR(unittest.TestCase):
     """Test Common Median Reference."""
@@ -411,17 +439,15 @@ class TestVrms(unittest.TestCase):
         self.assertAlmostEqual(vrms[0], 1.0, places=5)
         self.assertAlmostEqual(vrms[1], 2.0, places=5)
 
-    def test_threshold_zeros_small_values(self):
-        """Test that Vrms threshold zeros out sub-threshold points."""
-        data = np.array([[1.0, 0.01, -0.01, 5.0, -3.0]])
-        vrms = {0: 1.0}
-        # multiplier=1 → threshold = 1.0 → zero out |x| < 1
-        result = apply_vrms_threshold(data, vrms, [0], multiplier=1.0)
-        self.assertEqual(result[0, 0], 1.0)
-        self.assertEqual(result[0, 1], 0.0)
-        self.assertEqual(result[0, 2], 0.0)
-        self.assertEqual(result[0, 3], 5.0)
-        self.assertEqual(result[0, 4], -3.0)
+    def test_compute_vrms_excludes_masked_samples(self):
+        """Excluded (e.g. blanked) samples don't count; all-excluded gives NaN."""
+        data = np.array([np.r_[np.ones(100), 10 * np.ones(100)], np.ones(200)])
+        mask = np.zeros_like(data, dtype=bool)
+        mask[0, 100:] = True
+        mask[1, :] = True
+        vrms = compute_vrms(data, [4, 7], mask)
+        self.assertAlmostEqual(vrms[4], 1.0)
+        self.assertTrue(np.isnan(vrms[7]))
 
 
 class TestMixedFilterChain(unittest.TestCase):
@@ -466,23 +492,52 @@ class TestMixedFilterChain(unittest.TestCase):
         # Warnings should be empty for valid chain
         self.assertEqual(len(warnings), 0)
 
-    def test_chain_with_threshold(self):
-        """Test that Vrms is computed before thresholding."""
-        data = np.array([[1.0, 0.01, -0.01, 5.0, -3.0]] * 1000)
-        data = data.T  # (5, 1000) — but let's just use a simple 1-channel
-        data_1ch = np.array([np.concatenate([np.ones(500), 0.001 * np.ones(500)])])
-        filters = [
-            FilterConfig(FilterType.VRMS_THRESHOLD, vrms_multiplier=1.0),
-        ]
+    @staticmethod
+    def _chain_case():
+        fs = 24000
+        t = np.arange(24000) / fs
+        rng = np.random.default_rng(0)
+        shared = 3.0 * np.sin(2 * np.pi * 5 * t)  # low-frequency signal common to every channel
+        data = shared + rng.normal(0, 1.0, (4, t.size))
+        bp = FilterConfig(FilterType.BANDPASS, cutoff_low=50, cutoff_high=200, order=2)
+        return fs, data, bp
 
-        result, warnings, vrms = apply_filter_chain(
-            data_1ch, filters, 1000.0,
-            channel_indices=[0],
+    def test_bandpass_before_car_is_applied(self):
+        """A filter placed before CAR stays in the output (it used to be silently dropped)."""
+        from dsp.filters import apply_filter, design_filter
+
+        fs, data, bp = self._chain_case()
+        car = FilterConfig(FilterType.CAR, channel_groups=[[0, 1, 2, 3]])
+        expected, _ = apply_car(apply_filter(data, design_filter(bp, fs)), [[0, 1, 2, 3]])
+        for chain in ([bp, car], [car, bp]):  # CAR commutes with linear filters
+            out, warnings, _ = apply_filter_chain(
+                data[[1, 3]], chain, fs, all_channel_data=data, channel_indices=[1, 3]
+            )
+            self.assertEqual(warnings, [])
+            np.testing.assert_allclose(out, expected[[1, 3]], atol=1e-9)
+
+    def test_bandpass_before_cmr_is_applied(self):
+        from dsp.filters import apply_filter, design_filter
+
+        fs, data, bp = self._chain_case()
+        cmr = FilterConfig(FilterType.CMR, channel_groups=[[0, 1, 2, 3]])
+        expected, _ = apply_cmr(apply_filter(data, design_filter(bp, fs)), [[0, 1, 2, 3]])
+        out, warnings, _ = apply_filter_chain(
+            data[[0, 2]], [bp, cmr], fs, all_channel_data=data, channel_indices=[0, 2]
         )
+        self.assertEqual(warnings, [])
+        np.testing.assert_allclose(out, expected[[0, 2]], atol=1e-9)
 
-        # vrms computed BEFORE threshold was applied
-        self.assertIn(0, vrms)
-        self.assertGreater(vrms[0], 0)
+    def test_inputs_are_not_modified(self):
+        """The chain filters in place on its own copies only, never on the caller's arrays."""
+        fs, data, bp = self._chain_case()
+        car = FilterConfig(FilterType.CAR, channel_groups=[[0, 1, 2, 3]])
+        displayed = data[:2].copy()
+        before, before_all = displayed.copy(), data.copy()
+        apply_filter_chain(displayed, [bp, car, bp], fs, all_channel_data=data, channel_indices=[0, 1])
+        apply_filter_chain(displayed, [bp, bp], fs, channel_indices=[0, 1])
+        np.testing.assert_array_equal(displayed, before)
+        np.testing.assert_array_equal(data, before_all)
 
 
 class TestNewFilterConfigSerialization(unittest.TestCase):
@@ -510,16 +565,9 @@ class TestNewFilterConfigSerialization(unittest.TestCase):
         self.assertEqual(restored.filter_type, FilterType.CMR)
         self.assertEqual(restored.channel_groups, [[0, 1], [2, 3]])
 
-    def test_vrms_threshold_serialization(self):
-        """Test Vrms threshold config round-trips through dict."""
-        config = FilterConfig(
-            filter_type=FilterType.VRMS_THRESHOLD,
-            vrms_multiplier=5.0,
-        )
-        data = config.to_dict()
-        restored = FilterConfig.from_dict(data)
-        self.assertEqual(restored.filter_type, FilterType.VRMS_THRESHOLD)
-        self.assertEqual(restored.vrms_multiplier, 5.0)
+    def test_removed_vrms_threshold_type(self):
+        """The zeroing Vrms threshold filter no longer exists."""
+        self.assertNotIn("vrms_threshold", [t.value for t in FilterType])
 
     def test_car_display_name(self):
         """Test CAR display name."""
@@ -530,16 +578,6 @@ class TestNewFilterConfigSerialization(unittest.TestCase):
         name = config.get_display_name()
         self.assertIn("CAR", name)
         self.assertIn("3", name)
-
-    def test_vrms_display_name(self):
-        """Test Vrms threshold display name."""
-        config = FilterConfig(
-            filter_type=FilterType.VRMS_THRESHOLD,
-            vrms_multiplier=3.0,
-        )
-        name = config.get_display_name()
-        self.assertIn("Vrms", name)
-        self.assertIn("3.0", name)
 
 
 if __name__ == "__main__":

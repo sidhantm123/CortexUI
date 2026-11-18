@@ -1,15 +1,13 @@
 from .app_state import AppState
 from .workers import (
-    DataLoadWorker,
-    FilterWorker,
+    BufferLoadWorker,
     SpectralWorker,
     WorkerSignals,
 )
 
 __all__ = [
     "AppState",
-    "DataLoadWorker",
-    "FilterWorker",
+    "BufferLoadWorker",
     "SpectralWorker",
     "WorkerSignals",
 ]

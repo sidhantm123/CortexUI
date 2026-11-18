@@ -21,6 +21,32 @@ from PySide6.QtWidgets import (
 )
 
 from models import StreamState, ChannelMode
+from .theme import set_role, set_primary
+
+
+class NumberSpinBox(QSpinBox):
+    """Spinbox over a set of allowed numbers (e.g. electrode numbers with gaps); arrows skip gaps."""
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self._allowed: List[int] = []
+
+    def set_allowed(self, numbers: List[int]):
+        self._allowed = sorted(numbers)
+        if self._allowed:
+            self.setRange(self._allowed[0], self._allowed[-1])
+
+    def stepBy(self, steps: int):
+        if not self._allowed:
+            return super().stepBy(steps)
+        value = self.value()
+        if steps > 0:
+            bigger = [n for n in self._allowed if n > value]
+            target = bigger[min(steps, len(bigger)) - 1] if bigger else value
+        else:
+            smaller = [n for n in self._allowed if n < value]
+            target = smaller[-min(-steps, len(smaller))] if smaller else value
+        self.setValue(target)
 
 
 class ControlPanel(QWidget):
@@ -41,11 +67,13 @@ class ControlPanel(QWidget):
     view_range_requested = Signal(float, float)  # start, end
     refresh_requested = Signal()
     scatter_mode_changed = Signal(bool)
+    max_view_changed = Signal(float)  # seconds
 
     def __init__(self, parent=None):
         super().__init__(parent)
         self._setup_ui()
         self._state: Optional[StreamState] = None
+        self._neural: List[int] = []  # neural channels in display order
 
     def _setup_ui(self):
         """Set up the widget layout."""
@@ -54,7 +82,6 @@ class ControlPanel(QWidget):
 
         # Stream info
         self._stream_info_label = QLabel("No stream selected")
-        self._stream_info_label.setStyleSheet("font-weight: bold;")
         layout.addWidget(self._stream_info_label)
 
         # Channel mode group
@@ -80,12 +107,16 @@ class ControlPanel(QWidget):
         self._single_group = QGroupBox("Channel Selection")
         single_layout = QHBoxLayout(self._single_group)
 
-        single_layout.addWidget(QLabel("Channel:"))
-        self._channel_spin = QSpinBox()
+        single_layout.addWidget(QLabel("Electrode:"))
+        self._channel_spin = NumberSpinBox()
         self._channel_spin.setMinimum(1)
         self._channel_spin.setMaximum(1)
+        self._channel_spin.setKeyboardTracking(False)  # "125" is one change, not 1, 12, 125 (each a disk read)
         self._channel_spin.valueChanged.connect(self._on_single_channel_changed)
         single_layout.addWidget(self._channel_spin)
+        self._channel_name = QLabel("")
+        set_role(self._channel_name, "secondary")
+        single_layout.addWidget(self._channel_name)
         single_layout.addStretch()
 
         layout.addWidget(self._single_group)
@@ -147,6 +178,23 @@ class ControlPanel(QWidget):
         end_row.addWidget(self._end_spin)
         view_layout.addLayout(end_row)
 
+        # Longest span the time plots can show (app-wide, remembered)
+        max_row = QHBoxLayout()
+        max_row.addWidget(QLabel("Max length (s):"))
+        self._max_view_spin = QDoubleSpinBox()
+        self._max_view_spin.setDecimals(1)
+        self._max_view_spin.setRange(1.0, 3600.0)
+        self._max_view_spin.setSingleStep(5.0)
+        self._max_view_spin.setValue(20.0)
+        self._max_view_spin.setKeyboardTracking(False)
+        self._max_view_spin.setToolTip(
+            "Longest time span the plots can show. Shorter spans load faster when you jump around "
+            "the recording. With CAR/CMR or many overlay channels, memory can limit it further."
+        )
+        self._max_view_spin.valueChanged.connect(self.max_view_changed.emit)
+        max_row.addWidget(self._max_view_spin)
+        view_layout.addLayout(max_row)
+
         # Apply button
         btn_row = QHBoxLayout()
         self._apply_view_btn = QPushButton("Apply View")
@@ -159,14 +207,6 @@ class ControlPanel(QWidget):
         view_layout.addLayout(btn_row)
 
         layout.addWidget(view_group)
-
-        # Vrms display
-        self._vrms_group = QGroupBox("Vrms")
-        vrms_layout = QVBoxLayout(self._vrms_group)
-        self._vrms_label = QLabel("--")
-        self._vrms_label.setStyleSheet("font-family: monospace; font-size: 11px;")
-        vrms_layout.addWidget(self._vrms_label)
-        layout.addWidget(self._vrms_group)
 
         # Display options
         display_group = QGroupBox("Display")
@@ -188,19 +228,31 @@ class ControlPanel(QWidget):
         """Set the stream state to display."""
         self._state = state
 
+        # Only electrodes are offered (analog inputs have their own viewer), in display order
+        self._neural = state.ordered_neural_channels()
+        n_analog = len(state.analog_channels)
+
         # Update stream info
         self._stream_info_label.setText(
             f"{state.stream_name}\n"
-            f"{state.num_channels} ch @ {state.sample_rate:.0f} Hz"
+            f"{len(self._neural)} ch @ {state.sample_rate:.0f} Hz"
+            + (f" (+{n_analog} analog)" if n_analog else "")
         )
 
-        # Update channel selector range
-        self._channel_spin.setMaximum(state.num_channels)
-        self._channel_spin.setValue(state.selected_channel + 1)
+        # Channel selector: the value is the displayed number (electrode or channel)
+        self._single_group.setTitle(
+            "Electrode Selection" if state.uses_electrode_numbers else "Channel Selection"
+        )
+        self._channel_spin.blockSignals(True)
+        self._channel_spin.set_allowed([state.display_number(c) for c in self._neural] or [1])
+        if state.selected_channel in self._neural:
+            self._channel_spin.setValue(state.display_number(state.selected_channel))
+        self._channel_spin.blockSignals(False)
+        self._update_channel_name()
 
         # Update overlay channel combo
         self._add_channel_combo.clear()
-        for i in range(state.num_channels):
+        for i in self._neural:
             self._add_channel_combo.addItem(state.channel_label(i), i)
 
         # Update mode
@@ -226,9 +278,6 @@ class ControlPanel(QWidget):
         self._scatter_check.blockSignals(True)
         self._scatter_check.setChecked(state.scatter_mode)
         self._scatter_check.blockSignals(False)
-
-        # Restore Vrms display
-        self.update_vrms(state.vrms_values if state.vrms_values else None)
 
     def _update_overlay_list(self):
         """Update the overlay channel list widget."""
@@ -256,9 +305,25 @@ class ControlPanel(QWidget):
 
     def _on_single_channel_changed(self, value: int):
         """Handle single channel selection change."""
-        if self._state:
-            self._state.selected_channel = value - 1
-        self.single_channel_changed.emit(value - 1)
+        if not self._state:
+            return
+        channel = self._state.channel_for_number(value)
+        if channel is None:
+            return  # typed a number with no channel (gap); wait for a valid one
+        self._state.selected_channel = channel
+        self._update_channel_name()
+        self.single_channel_changed.emit(channel)
+
+    def _update_channel_name(self):
+        """Show the other identity of the selected channel, e.g. "Ch 125 · elec1-10"."""
+        st = self._state
+        if not st or st.selected_channel not in self._neural:
+            self._channel_name.setText("")
+            return
+        ch = st.selected_channel
+        label = st.channel_labels[ch] if st.channel_labels and ch < len(st.channel_labels) else ""
+        other = f"Ch {ch + 1}" if st.uses_electrode_numbers else (f"Elec {st.electrode_numbers[ch]}" if st.electrode_numbers else "")
+        self._channel_name.setText(" · ".join(x for x in (other, label) if x))
 
     def _on_add_channel(self):
         """Handle add channel button click."""
@@ -295,8 +360,8 @@ class ControlPanel(QWidget):
             end = start + 0.1
 
         if self._state:
-            self._state.view_start = start
-            self._state.view_end = end
+            self._state.set_view_range(start, end)  # clamps to the recording
+            start, end = self._state.get_view_range()
 
         self.view_range_requested.emit(start, end)
 
@@ -306,6 +371,12 @@ class ControlPanel(QWidget):
             self._start_spin.setValue(0)
             self._end_spin.setValue(min(10.0, self._state.duration))
             self._on_apply_view()
+
+    def set_max_view(self, seconds: float):
+        """Show the maximum view length (no signal)."""
+        self._max_view_spin.blockSignals(True)
+        self._max_view_spin.setValue(seconds)
+        self._max_view_spin.blockSignals(False)
 
     def update_view_range(self, start: float, end: float):
         """Update the view range spinboxes (called from plot)."""
@@ -317,8 +388,7 @@ class ControlPanel(QWidget):
         self._end_spin.blockSignals(False)
 
         if self._state:
-            self._state.view_start = start
-            self._state.view_end = end
+            self._state.set_view_range(start, end)  # clamped: a view past the ends must still hit the buffer
 
     def _on_scatter_mode_changed(self, state: int):
         """Handle scatter mode checkbox toggle."""
@@ -326,26 +396,6 @@ class ControlPanel(QWidget):
         if self._state:
             self._state.scatter_mode = enabled
         self.scatter_mode_changed.emit(enabled)
-
-    def update_vrms(self, vrms_values: Optional[Dict[int, float]]):
-        """Update the Vrms display."""
-        if not vrms_values:
-            self._vrms_label.setText("--")
-            return
-
-        lines = []
-        for ch_idx, vrms in sorted(vrms_values.items()):
-            name = self._state.channel_label(ch_idx) if self._state else f"Ch {ch_idx+1}"
-            if vrms < 1e-6:
-                lines.append(f"{name}: {vrms * 1e9:.1f} nV")
-            elif vrms < 1e-3:
-                lines.append(f"{name}: {vrms * 1e6:.1f} uV")
-            elif vrms < 1:
-                lines.append(f"{name}: {vrms * 1e3:.2f} mV")
-            else:
-                lines.append(f"{name}: {vrms:.4f} V")
-
-        self._vrms_label.setText("\n".join(lines))
 
     def clear(self):
         """Clear the panel."""
@@ -357,5 +407,4 @@ class ControlPanel(QWidget):
         self._overlay_list.clear()
         self._start_spin.setValue(0)
         self._end_spin.setValue(10)
-        self._vrms_label.setText("--")
         self._scatter_check.setChecked(False)
