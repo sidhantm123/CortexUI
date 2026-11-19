@@ -11,10 +11,10 @@ delete details that the code or git history already records.
 | | |
 |---|---|
 | Active branch | `dev-cycle` (from `docs/v1-released`; plan approved 2026-11-19: native toolchain, CI tweaks, update notifier) |
-| Last commit | Dev-cycle step 0: native Apple Silicon environment (`.venv`) |
+| Last commit | Dev-cycle step 1: CI (cancel superseded runs, beta pre-releases, generated notes), `main` protected |
 | Released | **CortexUI 1.0.0**, published 2026-11-19: `github.com/sidhantm123/CortexUI/releases/latest` |
 | Tests | 202 passing: `.venv/bin/python -m tests` (exit code 0 checked) |
-| Next step | Dev-cycle step 1: CI (cancel superseded runs, beta pre-releases, generated notes); then the update notifier |
+| Next step | Dev-cycle step 2: the update notifier (Help → Check for Updates) |
 
 ### Done
 1. Analog events (`78664d0`), editable onset/offset (`7b559ef`), Blanking tab Basic/Advanced (`e60ac42`).
@@ -28,39 +28,17 @@ delete details that the code or git history already records.
 10. (`ec903d7`, `9c7f5fc`, `7aa02ad`) UI: dark theme, µV/mV tick scaling, text roles, accent `#CC79A7` (user), thin
     progress bars, Time Series header (title, chips, RMS), hideable recording panel (the user kept the Block Info +
     Streams layout), toasts instead of a status bar, shortcuts, scrollable control tabs.
-13. (`b332ee8`) Audit step 1 (filter chain + CAR memory):
-    - **Bug:** any SOS filter placed *before* CAR/CMR was silently dropped (SOS ran on the displayed rows, CAR on the
-      raw all-channel array, which then overwrote them). The chain now runs in order on the all-channel array.
-    - **Bug:** adding CAR/CMR while the buffer covered the view never loaded the all-channel data (fast path).
-    - **Memory:** per-edit transient on a CAR view 4.0× → 1.35× of the all-channel buffer (1175 → 395 MB on a 3 s
-      view); the buffer is freed when no CAR/CMR needs it. Render path unchanged.
-14. (`177bdc4`) Audit step 2 (buffer logic): view length capped by `MAX_BUFFER_SAMPLES` (zooming out used to load the
-    whole recording); one disk load and one render per jump (was 2 + 2; the y auto-fit re-render is gone); views
-    past the ends clamped before the buffer checks; `_apply_filters`/`_rerender_from_buffer` use the buffer's
-    channels; CAR channel change re-slices instead of reloading; scatter toggle no longer re-filters; spin boxes
-    fire once per typed number; stream switch sets the plot to the stream's view; the analog follower's range is no
-    longer set while linked (10 s view came out as 7.52 s at load; the Sync drift known issue is gone).
-15. (`e5bb0f2`) Zoom cap + smooth loading (user report: single-channel zoom-out wasn't capped and pans waited for data):
-    - User "Max length" for the view (default 20 s, Channels → View Range, remembered), enforced for wheel,
-      trackpad, pinch, drag and keys; memory may lower it (CAR → 12.3 s).
-    - Sliding float32 buffer with direction-aware prefetch and incremental reads in the worker (blank + filter
-      there too); direct sequential `.nsX` reads, ~7× faster than neo's memmap on a cold disk; analog plot reuses
-      the main window's freshly cached pages; fixed a worker leak (~190 MB per pan).
-    - Trackpad: horizontal swipe pans, vertical swipe and pinch zoom. Raster unlinked: zooms freely, syncs within
-      the cap, row click opens the electrode at that time. CAR filters only the displayed rows (exact; 136× less).
-16. (`8b1d43b`) Audit step 3 (long-job lifecycle: Detect Events, Advanced blanking, Detect Spikes, Export):
-    - **Bug:** Cancel during event detection still replaced the events (and cleared blanking); a job cancelled before
-      opening another recording could install its result there. Workers now check Cancel before every result, and
-      `MainWindow._run_job` applies a result only if the job wasn't cancelled and the recording is the same.
-    - One job of each kind at a time: a cancelled job finishes its current chunk (Detect Spikes ~0.2 s on RP01)
-      and a restart meanwhile is refused with a toast (two exports to the same file used to delete each other).
-    - `export_binary` deletes its file when cancelled or failed (also when quitting). Quit, Open and Load Session
-      ask before stopping a running export; quit waits for the jobs (up to 10 s) before closing the reader.
-    - Progress dialogs are freed (`deleteLater`); every closed one used to stay alive with its worker.
-17. (`98f5b1f`) Audit step 4 (σ freeze): `freeze_sigma` works in 5 s chunks keeping only |x| (float32) and can be cancelled
-    (0–10 % of Detect Spikes). The chunk pipeline frees each chunk before reading the next (two were alive at
-    once). RP01, 128 ch, BP 250–5000: 20 s view + CAR peak 2.75 → 1.11 GB numpy, 10 s BP 0.87 → 0.61 GB; σ
-    identical to 1e-7.
+13. (`b332ee8`) Audit step 1: SOS filters placed before CAR/CMR were silently dropped (the chain now runs in order on the
+    all-channel array); CAR transient memory 4.0× → 1.35× of the buffer.
+14. (`177bdc4`) Audit step 2: view length capped by `MAX_BUFFER_SAMPLES`; one disk load + one render per jump; clamped
+    views; the analog follower is never ranged while linked (the old Sync drift).
+15. (`e5bb0f2`) Zoom cap (user "Max length", default 20 s, QSettings) + smooth loading: sliding float32 buffer with
+    direction-aware prefetch, direct `.nsX` reads (~7× neo's memmap cold), worker leak fixed, trackpad gestures,
+    raster unlinked, CAR filters only the displayed rows.
+16. (`8b1d43b`) Audit step 3 (long jobs): Cancel/stale results never install; one job per kind; cancelled/failed exports
+    delete their file; quit waits for jobs; progress dialogs freed.
+17. (`98f5b1f`) Audit step 4: `freeze_sigma` in 5 s chunks keeping |x| (float32), cancellable; pipeline frees each chunk
+    before the next (RP01 20 s + CAR peak 2.75 → 1.11 GB).
 18–22. Audit steps 5–9 (`7899b48` render path: NaN RMS no longer freezes the trace, blank/event items reused; `3e49243`
     failed Open/session change nothing, `.tmp` + rename saves; `7658f42` unassigning a line drops its events, trials
     follow renumbering; `97d2973` Analyze through `iter_processed_chunks` with CAR, capped at `MAX_ANALYSIS_SAMPLES`;
@@ -116,6 +94,8 @@ delete details that the code or git history already records.
     `LSMinimumSystemVersion` 14.0) and `packaging/make_dmg.sh` (ditto + Applications link, hdiutil UDZO, retries).
     Local Intel build: 181 MB app, 87 MB `.dmg`, ad-hoc signed, smoke test OK on RP01 (5 s warm, ~40 s first run).
 35. (`a237f04`, fixes `f80f111` `71a5723` `e3b3191`) Packaging step 3: `.github/workflows/release.yml` + release notes.
+    (Since dev-cycle step 1 it runs on PRs into `main`, tags and on demand; `concurrency` cancels superseded runs;
+    draft notes = `release_notes.md` + `releases/generate-notes`; a tag with `-` makes a pre-release.)
     The first CI runs found: Windows can't delete a still-mapped `.nsX` (`tests.remove_dir`), and **the test process
     crashed at exit after "OK" on every platform** (see Conventions: exit via `os._exit`, `python -m tests`). Job
     logs need admin rights, so failures go to public annotations (`packaging/ci_annotate.py`). First green run
@@ -396,6 +376,11 @@ tests/                unittest; test_blackrock.py has write_nsx_23() to build sy
 - Tests delete temp folders with `tests.remove_dir` (Windows can't delete a still-mapped `.nsX`).
 - Don't rebuild a widget from inside its own signal (table `itemChanged`, line `sigPositionChangeFinished`); defer with
   `QTimer.singleShot(0, ...)`.
+- **Branches:** `main` is production and protected (ruleset `main`: PR required, the three Build checks must pass,
+  no force-push or deletion; merged branches are deleted automatically). Every change: a short-lived branch → PR
+  (`gh pr create`) → CI green → the user merges. No long-lived dev branch. Lab testing: the PR's build artifacts,
+  or a beta pre-release (`APP_VERSION = "X.Y.Z-beta.N"`, tag `vX.Y.Z-beta.N`; `cortexui.spec` gives macOS the
+  numeric part).
 - Write commit messages in the imperative. **No Co-Authored-By or any other Claude attribution** (user rule,
   2026-11-17). Don't push unless the user asks.
 

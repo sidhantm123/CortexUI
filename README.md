@@ -53,7 +53,9 @@ packaging/make_dmg.sh                           # macOS: CortexUI-<version>-macO
 python packaging/make_icons.py                  # only when assets/logo.png changes (writes the icons)
 ```
 
-**Making a release:** set `APP_VERSION` in `version.py`, merge into `main`, then tag it (`git tag v1.0.0 && git push origin v1.0.0`). The **Build** workflow (`.github/workflows/release.yml`) builds and smoke-tests the app on Windows, an Apple silicon Mac and an Intel Mac, then creates a draft release with the three files and `packaging/release_notes.md`; publish it on GitHub. The same workflow runs on pull requests into `main` and on `release/**` branches without releasing. Release files come from the workflow: a local build runs only on the kind of machine that built it.
+**Changes:** `main` is always releasable and only changes through pull requests: work on a short-lived branch, open a pull request into `main`, and merge once the **Build** workflow (`.github/workflows/release.yml`) passes on Windows, an Apple silicon Mac and an Intel Mac (tests, build, smoke test of the built app). Each run's builds can be downloaded from its page for testing. A newer push to the same pull request cancels the run still going.
+
+**Making a release:** set `APP_VERSION` in `version.py` in a pull request, merge it, then tag `main` (`git tag v1.1.0 && git push origin v1.1.0`). The workflow builds the three files and creates a draft release whose notes are `packaging/release_notes.md` followed by the pull requests merged since the last release; check the files and publish it on GitHub. For lab testing first, use a beta: `APP_VERSION = "1.1.0-beta.1"` and tag `v1.1.0-beta.1` makes a draft **pre-release**, which never becomes the "latest" download. Release files come from the workflow: a local build runs only on the kind of machine that built it.
 
 ## Usage
 
