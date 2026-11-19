@@ -131,6 +131,10 @@ def run_smoke_test(app, window, folder: str) -> int:
         block = window._app_state.block
         state = window._app_state.get_current_state()
         if block is not None and state is not None and window._filtered_data is not None:
+            from core.update_check import ssl_context
+            if not ssl_context().cert_store_stats()["x509_ca"]:  # certifi missing from the build
+                fail("no root certificates: Check for Updates could not reach GitHub")
+                return
             finish(0, f"smoke test ok: {block.name}, streams {', '.join(block.streams)}, "
                       f"{state.num_channels} channels at {state.sample_rate:g} Hz")
         elif time.monotonic() - started > SMOKE_TEST_TIMEOUT_S:
@@ -235,6 +239,7 @@ def main():
             folder_path = sys.argv[1]
             if os.path.isdir(folder_path):
                 window._load_block(folder_path)
+        window.check_for_updates_at_launch()
         code = app.exec()
 
     # End here, without the interpreter's teardown of the Qt objects (as pyqtgraph advises): PySide

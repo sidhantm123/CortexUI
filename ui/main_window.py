@@ -1,11 +1,13 @@
 """Main application window."""
 import copy
 import os
+import threading
+import time
 import weakref
 from pathlib import Path
 from typing import Optional
 
-from PySide6.QtCore import Qt, Slot, QTimer, QSettings, QEvent
+from PySide6.QtCore import Qt, Slot, QTimer, QSettings, QEvent, QUrl, Signal
 from PySide6.QtWidgets import (
     QMainWindow,
     QWidget,
@@ -27,10 +29,13 @@ from PySide6.QtWidgets import (
     QAbstractSlider,
     QScrollArea,
 )
-from PySide6.QtGui import QAction, QActionGroup, QDragEnterEvent, QDropEvent, QKeyEvent, QKeySequence, QShortcut
+from PySide6.QtGui import (
+    QAction, QActionGroup, QDesktopServices, QDragEnterEvent, QDropEvent, QKeyEvent, QKeySequence, QShortcut,
+)
 
 import numpy as np
 
+from core import update_check
 from core.app_state import AppState
 from core.view_buffer import window_target, process_buffer
 from core.workers import (
@@ -97,6 +102,10 @@ def _placeholder_tab(text: str) -> QWidget:
 
 class MainWindow(QMainWindow):
     """Main application window."""
+
+    # The update check's answer (a Release or None, manual), sent from its thread
+    _update_checked = Signal(object, bool)
+    UPDATE_INTERVAL_S = 24 * 3600  # the automatic check runs at most once a day
 
     # Maximum points to plot without decimation
     MAX_PLOT_POINTS = 8000
@@ -190,6 +199,8 @@ class MainWindow(QMainWindow):
 
         self._last_filter_warning = ""  # shown once until it changes
         self._settings_guide = None  # Help → Settings Guide window, made on first use
+        self._update_thread: Optional[threading.Thread] = None
+        self._update_checked.connect(self._on_update_checked)
 
         self._setup_ui()
         self._setup_menu()
@@ -411,9 +422,89 @@ class MainWindow(QMainWindow):
         shortcuts_action.triggered.connect(self._on_show_shortcuts)
         help_menu.addAction(shortcuts_action)
 
+        help_menu.addSeparator()
+        help_menu.setToolTipsVisible(True)
+        check_updates = QAction("Check for Updates…", self)
+        check_updates.triggered.connect(lambda: self._check_for_updates(manual=True))
+        help_menu.addAction(check_updates)
+        self._auto_update_action = QAction("Check for Updates Automatically", self, checkable=True)
+        self._auto_update_action.setChecked(self._settings.value("check_updates", True, type=bool))
+        self._auto_update_action.toggled.connect(lambda on: self._settings.setValue("check_updates", on))
+        self._auto_update_action.setToolTip(tooltip("updates.auto"))
+        check_updates.setToolTip(tooltip("updates.auto"))
+        help_menu.addAction(self._auto_update_action)
+
         about_action = QAction("About", self)
         about_action.triggered.connect(self._on_about)
         help_menu.addAction(about_action)
+
+    def check_for_updates_at_launch(self):
+        """Called by main() (never in --smoke-test): at most once a day, unless switched off."""
+        if not self._auto_update_action.isChecked():
+            return
+        last = self._settings.value("update_last_check", 0.0, type=float)
+        if time.time() - last >= self.UPDATE_INTERVAL_S:
+            self._check_for_updates(manual=False)
+
+    def _check_for_updates(self, manual: bool):
+        """Ask GitHub in a thread (up to 10 s); the answer comes back through _update_checked."""
+        if self._update_thread is not None and self._update_thread.is_alive():
+            return
+        include_betas = "-" in APP_VERSION  # a beta build also hears about newer betas
+
+        def run():
+            self._update_checked.emit(update_check.fetch_newest_release(include_betas), manual)
+
+        self._update_thread = threading.Thread(target=run, name="update-check", daemon=True)
+        self._update_thread.start()
+        if manual:
+            self._toast.show_message("Checking for updates…", INFO)
+
+    def _on_update_checked(self, release, manual: bool):
+        if release is None:
+            if manual:
+                QMessageBox.warning(
+                    self, "Check for Updates",
+                    "Couldn't reach GitHub to check for updates. Check the internet connection and try "
+                    f"again, or see the releases page:\n{APP_URL}/releases",
+                )
+            return
+        self._settings.setValue("update_last_check", time.time())
+        if not update_check.is_newer(release.version):
+            if manual:
+                QMessageBox.information(
+                    self, "Check for Updates", f"You're up to date: {APP_NAME} {APP_VERSION} is the newest version."
+                )
+            return
+        if not manual and self._settings.value("update_skip", "") == release.version:
+            return  # the user skipped this version; a manual check still offers it
+        self._offer_update(release)
+
+    def _offer_update(self, release):
+        box = QMessageBox(self)
+        box.setWindowTitle("Update Available")
+        box.setIcon(QMessageBox.Icon.Information)
+        beta = " (a beta)" if release.prerelease else ""
+        box.setText(f"{APP_NAME} {release.version}{beta} is available. You have {APP_VERSION}.")
+        box.setInformativeText(
+            "Download opens the file for this computer in your browser. Install it as before: on a Mac, "
+            "open the .dmg and drag CortexUI onto Applications (replace the old one); on Windows, extract "
+            "the .zip and use the new folder. Your settings are kept."
+        )
+        download = box.addButton("Download", QMessageBox.ButtonRole.AcceptRole)
+        notes = box.addButton("What's New", QMessageBox.ButtonRole.ActionRole)
+        skip = box.addButton("Skip This Version", QMessageBox.ButtonRole.DestructiveRole)
+        box.addButton("Later", QMessageBox.ButtonRole.RejectRole)
+        box.setDefaultButton(download)
+        box.exec()
+        clicked = box.clickedButton()
+        if clicked is download:
+            QDesktopServices.openUrl(QUrl(update_check.asset_for_this_machine(release.assets) or release.page))
+        elif clicked is notes:
+            QDesktopServices.openUrl(QUrl(release.page))
+        elif clicked is skip:
+            self._settings.setValue("update_skip", release.version)
+        box.deleteLater()
 
     def _on_settings_guide(self):
         """Help → Settings Guide: every setting explained, searchable (non-modal, one window)."""

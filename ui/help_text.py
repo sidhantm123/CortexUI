@@ -438,6 +438,13 @@ HELP: Dict[str, Help] = {
         "Shades detected events behind the Time Series traces, in their modality's colour.",
         "on",
     ),
+    "updates.auto": Help(
+        "Check for Updates Automatically",
+        "At launch, at most once a day, asks GitHub whether a newer CortexUI has been released and, if so, offers "
+        "to download it (Help → Check for Updates… checks at any time). It is one anonymous request to GitHub: "
+        "nothing about you or your recordings is sent, and nothing is installed without you.",
+        "on",
+    ),
     "info.all_fields": Help(
         "Show all fields",
         "Lists every channel setting stored in the .ccf file, not just the main ones.",
@@ -482,6 +489,7 @@ SECTIONS: List[Tuple[str, List[str]]] = [
                        "export.scale", "export.layout", "export.extension"]),
     ("View menu and other dialogs", ["view.numbering", "view.recording_panel", "view.shade_events",
                                      "info.all_fields", "probe.file", "probe.table"]),
+    ("Help menu", ["updates.auto"]),
 ]
 
 
