@@ -91,12 +91,13 @@ if sys.platform == 'darwin':
         name=f'{APP_NAME}.app',
         icon='assets/icon.icns',
         bundle_identifier='io.github.sidhantm123.cortexui',
-        version=APP_VERSION,
+        version=APP_VERSION.split('-')[0],
         info_plist={
             'CFBundleName': APP_NAME,
             'CFBundleDisplayName': APP_NAME,
-            'CFBundleVersion': APP_VERSION,
-            'CFBundleShortVersionString': APP_VERSION,
+            # macOS wants plain numbers here: a beta (1.1.0-beta.1) is 1.1.0 (the About box shows the suffix)
+            'CFBundleVersion': APP_VERSION.split('-')[0],
+            'CFBundleShortVersionString': APP_VERSION.split('-')[0],
             # numpy/scipy wheels for macOS are built for 14 and later (Accelerate)
             'LSMinimumSystemVersion': '14.0',
             'NSHighResolutionCapable': True,

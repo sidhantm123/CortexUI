@@ -10,10 +10,11 @@ delete details that the code or git history already records.
 
 | | |
 |---|---|
-| Active branch | `release/v1.0` (from `main` @ `cb5b2dc`, after PR #5 merged the settings help) |
-| Last commit | The user's logo (`assets/logo.png`) as the app icon |
-| Tests | 202 passing: `tdtgui/bin/python -m tests` (exit code 0 checked) |
-| Next step | PR `release/v1.0` → `main` (CI green); after the merge, tag `v1.0.0` with the user's OK (§4) |
+| Active branch | `dev-cycle` (from `docs/v1-released`; plan approved 2026-11-19: native toolchain, CI tweaks, update notifier) |
+| Last commit | Dev-cycle step 3: docs for updates and the release flow |
+| Released | **CortexUI 1.0.0**, published 2026-11-19: `github.com/sidhantm123/CortexUI/releases/latest` |
+| Tests | 216 passing: `.venv/bin/python -m tests` (exit code 0 checked) |
+| Next step | PR `dev-cycle` → `main` (CI green), then branch cleanup with the user's OK; next release 1.1.0 ships the notifier |
 
 ### Done
 1. Analog events (`78664d0`), editable onset/offset (`7b559ef`), Blanking tab Basic/Advanced (`e60ac42`).
@@ -27,39 +28,17 @@ delete details that the code or git history already records.
 10. (`ec903d7`, `9c7f5fc`, `7aa02ad`) UI: dark theme, µV/mV tick scaling, text roles, accent `#CC79A7` (user), thin
     progress bars, Time Series header (title, chips, RMS), hideable recording panel (the user kept the Block Info +
     Streams layout), toasts instead of a status bar, shortcuts, scrollable control tabs.
-13. (`b332ee8`) Audit step 1 (filter chain + CAR memory):
-    - **Bug:** any SOS filter placed *before* CAR/CMR was silently dropped (SOS ran on the displayed rows, CAR on the
-      raw all-channel array, which then overwrote them). The chain now runs in order on the all-channel array.
-    - **Bug:** adding CAR/CMR while the buffer covered the view never loaded the all-channel data (fast path).
-    - **Memory:** per-edit transient on a CAR view 4.0× → 1.35× of the all-channel buffer (1175 → 395 MB on a 3 s
-      view); the buffer is freed when no CAR/CMR needs it. Render path unchanged.
-14. (`177bdc4`) Audit step 2 (buffer logic): view length capped by `MAX_BUFFER_SAMPLES` (zooming out used to load the
-    whole recording); one disk load and one render per jump (was 2 + 2; the y auto-fit re-render is gone); views
-    past the ends clamped before the buffer checks; `_apply_filters`/`_rerender_from_buffer` use the buffer's
-    channels; CAR channel change re-slices instead of reloading; scatter toggle no longer re-filters; spin boxes
-    fire once per typed number; stream switch sets the plot to the stream's view; the analog follower's range is no
-    longer set while linked (10 s view came out as 7.52 s at load; the Sync drift known issue is gone).
-15. (`e5bb0f2`) Zoom cap + smooth loading (user report: single-channel zoom-out wasn't capped and pans waited for data):
-    - User "Max length" for the view (default 20 s, Channels → View Range, remembered), enforced for wheel,
-      trackpad, pinch, drag and keys; memory may lower it (CAR → 12.3 s).
-    - Sliding float32 buffer with direction-aware prefetch and incremental reads in the worker (blank + filter
-      there too); direct sequential `.nsX` reads, ~7× faster than neo's memmap on a cold disk; analog plot reuses
-      the main window's freshly cached pages; fixed a worker leak (~190 MB per pan).
-    - Trackpad: horizontal swipe pans, vertical swipe and pinch zoom. Raster unlinked: zooms freely, syncs within
-      the cap, row click opens the electrode at that time. CAR filters only the displayed rows (exact; 136× less).
-16. (`8b1d43b`) Audit step 3 (long-job lifecycle: Detect Events, Advanced blanking, Detect Spikes, Export):
-    - **Bug:** Cancel during event detection still replaced the events (and cleared blanking); a job cancelled before
-      opening another recording could install its result there. Workers now check Cancel before every result, and
-      `MainWindow._run_job` applies a result only if the job wasn't cancelled and the recording is the same.
-    - One job of each kind at a time: a cancelled job finishes its current chunk (Detect Spikes ~0.2 s on RP01)
-      and a restart meanwhile is refused with a toast (two exports to the same file used to delete each other).
-    - `export_binary` deletes its file when cancelled or failed (also when quitting). Quit, Open and Load Session
-      ask before stopping a running export; quit waits for the jobs (up to 10 s) before closing the reader.
-    - Progress dialogs are freed (`deleteLater`); every closed one used to stay alive with its worker.
-17. (`98f5b1f`) Audit step 4 (σ freeze): `freeze_sigma` works in 5 s chunks keeping only |x| (float32) and can be cancelled
-    (0–10 % of Detect Spikes). The chunk pipeline frees each chunk before reading the next (two were alive at
-    once). RP01, 128 ch, BP 250–5000: 20 s view + CAR peak 2.75 → 1.11 GB numpy, 10 s BP 0.87 → 0.61 GB; σ
-    identical to 1e-7.
+13. (`b332ee8`) Audit step 1: SOS filters placed before CAR/CMR were silently dropped (the chain now runs in order on the
+    all-channel array); CAR transient memory 4.0× → 1.35× of the buffer.
+14. (`177bdc4`) Audit step 2: view length capped by `MAX_BUFFER_SAMPLES`; one disk load + one render per jump; clamped
+    views; the analog follower is never ranged while linked (the old Sync drift).
+15. (`e5bb0f2`) Zoom cap (user "Max length", default 20 s, QSettings) + smooth loading: sliding float32 buffer with
+    direction-aware prefetch, direct `.nsX` reads (~7× neo's memmap cold), worker leak fixed, trackpad gestures,
+    raster unlinked, CAR filters only the displayed rows.
+16. (`8b1d43b`) Audit step 3 (long jobs): Cancel/stale results never install; one job per kind; cancelled/failed exports
+    delete their file; quit waits for jobs; progress dialogs freed.
+17. (`98f5b1f`) Audit step 4: `freeze_sigma` in 5 s chunks keeping |x| (float32), cancellable; pipeline frees each chunk
+    before the next (RP01 20 s + CAR peak 2.75 → 1.11 GB).
 18–22. Audit steps 5–9 (`7899b48` render path: NaN RMS no longer freezes the trace, blank/event items reused; `3e49243`
     failed Open/session change nothing, `.tmp` + rename saves; `7658f42` unassigning a line drops its events, trials
     follow renumbering; `97d2973` Analyze through `iter_processed_chunks` with CAR, capped at `MAX_ANALYSIS_SAMPLES`;
@@ -115,16 +94,30 @@ delete details that the code or git history already records.
     `LSMinimumSystemVersion` 14.0) and `packaging/make_dmg.sh` (ditto + Applications link, hdiutil UDZO, retries).
     Local Intel build: 181 MB app, 87 MB `.dmg`, ad-hoc signed, smoke test OK on RP01 (5 s warm, ~40 s first run).
 35. (`a237f04`, fixes `f80f111` `71a5723` `e3b3191`) Packaging step 3: `.github/workflows/release.yml` + release notes.
+    (Since dev-cycle step 1 it runs on PRs into `main`, tags and on demand; `concurrency` cancels superseded runs;
+    draft notes = `release_notes.md` + `releases/generate-notes`; a tag with `-` makes a pre-release.)
     The first CI runs found: Windows can't delete a still-mapped `.nsX` (`tests.remove_dir`), and **the test process
     crashed at exit after "OK" on every platform** (see Conventions: exit via `os._exit`, `python -m tests`). Job
     logs need admin rights, so failures go to public annotations (`packaging/ci_annotate.py`). First green run
     44378241396 (6 min): artifacts Apple Silicon 73.6 MB, Intel 81.9 MB, Windows 103 MB.
-36. Packaging step 4: README Download section (`…/releases/latest`), how to make a release, macOS first-launch help.
+36. (`fbebb28`, logo `84e8771`) Packaging step 4: README Download section (`…/releases/latest`), how to make a release, macOS first-launch help.
+
+37. **CortexUI 1.0.0 released** (PR #6 → `main` @ `8eb0c0d`, tag `v1.0.0`; the user published the draft on
+    2026-11-19). Release run 44383360463. The released Apple Silicon `.dmg`, downloaded from `releases/latest`, ran
+    natively (arm64, `minos` 14.0, signature valid) and passed the smoke test on RP01.
+
+38. Dev cycle (plan 2026-11-19; `c2af013` `2e92f78` `0ecfc7c`): native Apple Silicon `.venv` (step 0); `main` protected
+    by ruleset `main` + auto-deleted merged branches (applied via `gh api`), Build on PRs/tags/on demand with
+    superseded runs cancelled, beta pre-releases, generated notes (step 1); **update notifier** (step 2): Help →
+    Check for Updates… / …Automatically (QSettings `check_updates`, `update_last_check`, `update_skip`; at launch
+    ≤ once a day, never in `--smoke-test`), a thread emits `MainWindow._update_checked`; the offer opens the asset
+    for this machine (Rosetta → Apple Silicon) in the browser. HTTPS uses certifi (`requirements.txt`): python.org
+    builds have no CA certs, so the smoke test fails without them. 1.0.0 users must update by hand once.
 
 ### Branches and repo
 - **Repo:** `github.com/sidhantm123/CortexUI` (public; renamed from `tdtgui` on 2026-11-19, old URLs redirect).
-- **`main`:** everything so far (PR #4 merged `NSP_Basic`, PR #5 the settings help). New work branches from it.
-- **`release/v1.0`:** packaging (§4).
+- **`main`:** everything so far (PR #4 `NSP_Basic`, PR #5 settings help, PR #6 `release/v1.0` = 1.0.0). New work
+  branches from it; releases are tags on `main` (`v1.0.0` = `8eb0c0d`).
 - **`nsp_pipeline`:** a **local archive only, never merge it**. It held an elaborate NSP preprocessing pipeline the user dropped
   as "too complicated". Its `nsp_pipeline/events.py` helpers were reused in `dsp/events.py`.
 
@@ -160,6 +153,7 @@ main.py               entry point (`--smoke-test FOLDER` checks a build);  versi
 core/app_state.py     AppState: reader, block, per-stream StreamState, analog assignments, events, session JSON
 core/workers.py       QRunnable workers (data load, filter, spectral, EventDetectWorker) + WorkerManager
 core/reader_factory.py  open_reader(folder) -> TDTReader | BlackrockReader
+core/update_check.py  newest GitHub release (urllib + certifi), version order, the download for this machine
 tdt_io/, blackrock_io/  readers: load_block(), get_stream_data(stream, channels, t0, t1) -> (ch × samples volts, time)
 models/               StreamInfo/RecordingBlock, StreamState, FilterConfig, ProbeGeometry, analog.py (events)
 dsp/                  filters, CAR/CMR, Vrms, decimation, spectral, events.py — no Qt imports
@@ -391,6 +385,11 @@ tests/                unittest; test_blackrock.py has write_nsx_23() to build sy
 - Tests delete temp folders with `tests.remove_dir` (Windows can't delete a still-mapped `.nsX`).
 - Don't rebuild a widget from inside its own signal (table `itemChanged`, line `sigPositionChangeFinished`); defer with
   `QTimer.singleShot(0, ...)`.
+- **Branches:** `main` is production and protected (ruleset `main`: PR required, the three Build checks must pass,
+  no force-push or deletion; merged branches are deleted automatically). Every change: a short-lived branch → PR
+  (`gh pr create`) → CI green → the user merges. No long-lived dev branch. Lab testing: the PR's build artifacts,
+  or a beta pre-release (`APP_VERSION = "X.Y.Z-beta.N"`, tag `vX.Y.Z-beta.N`; `cortexui.spec` gives macOS the
+  numeric part).
 - Write commit messages in the imperative. **No Co-Authored-By or any other Claude attribution** (user rule,
   2026-11-17). Don't push unless the user asks.
 
@@ -398,9 +397,10 @@ tests/                unittest; test_blackrock.py has write_nsx_23() to build sy
 
 ## 4. Roadmap
 
-### Package and release CortexUI v1.0 (approved 2026-11-18): steps 1–4 done (§1 items 33–36)
-Left: PR `release/v1.0` → `main` (CI green on all three), then, with the user's OK at that moment, `git tag v1.0.0`
-on `main` and push it; the workflow makes a draft release; the user tries the files and publishes it.
+### CortexUI 1.0.0: released 2026-11-19 (§1 items 33–37)
+Untested by a person: the Windows `.zip` and the Intel `.dmg` (only the CI smoke test). **Next release:** bump
+`APP_VERSION` in `version.py`, merge into `main`, then tag `vX.Y.Z` **only with the user's OK at that moment**; the
+workflow makes a draft; the user tries the files and publishes. A published tag is never moved (fix → next version).
 
 ### Audit fixes (approved 2026-11-17): all 11 steps done (§1 items 13, 14, 16–24)
 Untested for lack of data: TDT `.sev` stores, a real TDT block, a lab probeinterface file.
@@ -456,17 +456,22 @@ Untested for lack of data: TDT `.sev` stores, a real TDT block, a lab probeinter
 
 ## 6. Environment
 
-- **Venv:** `tdtgui/` inside the repo (untracked; the README tells new setups to use `.venv`).
-- **Run:** `tdtgui/bin/python main.py`.
+- **Machine:** M1 MacBook Air, 8 GB RAM, 256 GB disk (~15 GB free): avoid holding whole-file arrays of all
+  channels, and mind disk space (`.venv` 1.3 GB, a build ~0.4 GB).
+- **Toolchain (native arm64 since 2026-11-19):** Homebrew in `/opt/homebrew` (Python 3.13, `gh`). The old Intel
+  Homebrew in `/usr/local` (Rosetta; unsupported by Homebrew since Sept 2026) still holds the user's other tools until
+  they move them. Before the switch everything ran under Rosetta and local builds were Intel; native compute is
+  the same speed, reads ~30 % faster (RP01 20 s × 136 ch: 0.9 vs 1.3 s), tests 14 vs 20 s.
+- **Venv:** `.venv/` inside the repo (untracked). **Run:** `.venv/bin/python main.py`.
 - **Requirements:**
   - `requirements.txt` pins PySide6 6.10, pyqtgraph 0.14, neo 0.14.5, scipy, numpy and tdt.
   - `h5py` is installed in the venv but not required.
 - **Headless UI checks:** `QT_QPA_PLATFORM=offscreen`, then `w.grab().save(...)` for screenshots.
-- **Tools:** `gh` is not installed; the user merges PRs on GitHub.
+- **GitHub CLI:** `gh` is logged in as `sidhantm123` (scopes `repo`, `workflow`). Use it for PRs (`gh pr create`),
+  CI (`gh run watch`, `gh run view --log-failed`) and releases. Still push, tag and merge only with the user's OK.
 - **Packaging:** `pyinstaller --clean --noconfirm cortexui.spec`, `packaging/make_dmg.sh`, `packaging/make_icons.py`;
   `QT_QPA_PLATFORM=offscreen dist/CortexUI.app/Contents/MacOS/CortexUI --smoke-test FOLDER`. Minimum macOS 14
-  (numpy/scipy wheels). Release files come from the CI only (this Mac's Homebrew Python bundles libs for macOS 26).
-- **CI status without signing in:** the anonymous API allows 60 requests/hour (poll ≥ 2 min; `ci_watch`-style
-  monitors used it up); annotations are public (`/check-runs/<job>/annotations`); the run's web page
-  (`github.com/sidhantm123/CortexUI/actions/runs/<id>`) is not rate-limited.
-- **Machine:** 8 GB RAM. Avoid holding whole-file arrays of all channels.
+  (numpy/scipy wheels). Local builds are now Apple Silicon. Release files come from the CI only (Homebrew's Python
+  bundles libraries built for macOS 26).
+- **Without `gh`:** the anonymous API allows 60 requests/hour, job logs need sign-in, annotations are public, and the
+  run's web page is not rate-limited.

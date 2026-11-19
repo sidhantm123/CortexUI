@@ -97,7 +97,7 @@ class TestSettingsGuide(unittest.TestCase):
         shown = guide._browser.toPlainText()
         self.assertIn("Notch Freq", shown)
         self.assertNotIn("Merge gap", shown)
-        self.assertIn("of 74 settings", guide._count.text())
+        self.assertIn(f"of {len(HELP)} settings", guide._count.text())
         guide._search.setText("zzz-no-such-setting")
         self.assertIn("No setting matches", guide._browser.toPlainText())
 

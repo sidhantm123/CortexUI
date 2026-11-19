@@ -1,4 +1,5 @@
 altgraph==0.17.5
+certifi==2026.10.23
 colorama==0.4.6
 macholib==1.16.4
 neo==0.14.5

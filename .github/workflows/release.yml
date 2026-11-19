@@ -1,10 +1,11 @@
-# Builds CortexUI for Windows, Apple Silicon and Intel Macs, and smoke-tests each build.
-# A pushed tag vX.Y.Z (matching version.py) also makes a draft GitHub release with the three files.
+# Builds CortexUI for Windows, Apple Silicon and Intel Macs, and smoke-tests each build: on every
+# pull request into main (main only changes through those) and on demand (gh workflow run Build --ref BRANCH).
+# A pushed tag vX.Y.Z (matching version.py) also makes a draft GitHub release with the three files;
+# a tag with a suffix (v1.1.0-beta.1) makes a pre-release, which never becomes "latest".
 name: Build
 
 on:
   push:
-    branches: ['release/**']
     tags: ['v*']
   pull_request:
     branches: [main]
@@ -12,6 +13,11 @@ on:
 
 permissions:
   contents: read
+
+# A newer push to the same pull request or branch cancels the run still going; release runs (tags) never are
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ !startsWith(github.ref, 'refs/tags/') }}
 
 jobs:
   build:
@@ -127,5 +133,14 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           ls -la dist
-          gh release create "$GITHUB_REF_NAME" dist/CortexUI-* --draft \
-            --title "CortexUI ${GITHUB_REF_NAME#v}" --notes-file packaging/release_notes.md
+          # The fixed notes (which file, first launch), then GitHub's list of pull requests merged
+          # since the previous release
+          {
+            cat packaging/release_notes.md
+            echo
+            gh api "repos/$GITHUB_REPOSITORY/releases/generate-notes" -f tag_name="$GITHUB_REF_NAME" --jq .body
+          } > notes.md
+          prerelease=()
+          case "$GITHUB_REF_NAME" in *-*) prerelease=(--prerelease) ;; esac
+          gh release create "$GITHUB_REF_NAME" dist/CortexUI-* --draft "${prerelease[@]}" \
+            --title "CortexUI ${GITHUB_REF_NAME#v}" --notes-file notes.md
