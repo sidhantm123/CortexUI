@@ -11,10 +11,10 @@ delete details that the code or git history already records.
 | | |
 |---|---|
 | Active branch | `dev-cycle` (from `docs/v1-released`; plan approved 2026-11-19: native toolchain, CI tweaks, update notifier) |
-| Last commit | Dev-cycle step 1: CI (cancel superseded runs, beta pre-releases, generated notes), `main` protected |
+| Last commit | Dev-cycle step 3: docs for updates and the release flow |
 | Released | **CortexUI 1.0.0**, published 2026-11-19: `github.com/sidhantm123/CortexUI/releases/latest` |
-| Tests | 202 passing: `.venv/bin/python -m tests` (exit code 0 checked) |
-| Next step | Dev-cycle step 2: the update notifier (Help → Check for Updates) |
+| Tests | 216 passing: `.venv/bin/python -m tests` (exit code 0 checked) |
+| Next step | PR `dev-cycle` → `main` (CI green), then branch cleanup with the user's OK; next release 1.1.0 ships the notifier |
 
 ### Done
 1. Analog events (`78664d0`), editable onset/offset (`7b559ef`), Blanking tab Basic/Advanced (`e60ac42`).
@@ -106,6 +106,14 @@ delete details that the code or git history already records.
     2026-11-19). Release run 44383360463. The released Apple Silicon `.dmg`, downloaded from `releases/latest`, ran
     natively (arm64, `minos` 14.0, signature valid) and passed the smoke test on RP01.
 
+38. Dev cycle (plan 2026-11-19; `c2af013` `2e92f78` `0ecfc7c`): native Apple Silicon `.venv` (step 0); `main` protected
+    by ruleset `main` + auto-deleted merged branches (applied via `gh api`), Build on PRs/tags/on demand with
+    superseded runs cancelled, beta pre-releases, generated notes (step 1); **update notifier** (step 2): Help →
+    Check for Updates… / …Automatically (QSettings `check_updates`, `update_last_check`, `update_skip`; at launch
+    ≤ once a day, never in `--smoke-test`), a thread emits `MainWindow._update_checked`; the offer opens the asset
+    for this machine (Rosetta → Apple Silicon) in the browser. HTTPS uses certifi (`requirements.txt`): python.org
+    builds have no CA certs, so the smoke test fails without them. 1.0.0 users must update by hand once.
+
 ### Branches and repo
 - **Repo:** `github.com/sidhantm123/CortexUI` (public; renamed from `tdtgui` on 2026-11-19, old URLs redirect).
 - **`main`:** everything so far (PR #4 `NSP_Basic`, PR #5 settings help, PR #6 `release/v1.0` = 1.0.0). New work
@@ -145,6 +153,7 @@ main.py               entry point (`--smoke-test FOLDER` checks a build);  versi
 core/app_state.py     AppState: reader, block, per-stream StreamState, analog assignments, events, session JSON
 core/workers.py       QRunnable workers (data load, filter, spectral, EventDetectWorker) + WorkerManager
 core/reader_factory.py  open_reader(folder) -> TDTReader | BlackrockReader
+core/update_check.py  newest GitHub release (urllib + certifi), version order, the download for this machine
 tdt_io/, blackrock_io/  readers: load_block(), get_stream_data(stream, channels, t0, t1) -> (ch × samples volts, time)
 models/               StreamInfo/RecordingBlock, StreamState, FilterConfig, ProbeGeometry, analog.py (events)
 dsp/                  filters, CAR/CMR, Vrms, decimation, spectral, events.py — no Qt imports

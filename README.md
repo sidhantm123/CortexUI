@@ -6,6 +6,8 @@ A desktop app (Windows / macOS) for viewing and analyzing multi-channel neural r
 
 Get the latest version from **[Releases](https://github.com/sidhantm123/CortexUI/releases/latest)**: a `.dmg` for Macs (Apple silicon or Intel, macOS 14 or later) or a `.zip` for Windows 10/11. No Python needed. The release page says which file to pick and how to open the app the first time: it is not signed, so macOS and Windows ask once.
 
+**Updates:** from version 1.1, CortexUI checks GitHub for a newer version at launch (at most once a day) and offers the download for your computer; **Help → Check for Updates…** checks at any time, and **Help → Check for Updates Automatically** turns it off. It is one anonymous request: nothing about you or your recordings is sent, and nothing is installed without you. Version 1.0.0 doesn't check, so update it once by hand from the link above.
+
 ## Features
 
 - Single-channel or overlay (up to 8 channels) time-series plots, smooth on recordings of 2+ hours

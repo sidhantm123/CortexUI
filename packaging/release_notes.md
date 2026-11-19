@@ -24,6 +24,10 @@ You only do this once. On macOS 14 you can instead Control-click the app and cho
 2. In the extracted **CortexUI** folder, run **CortexUI.exe**. Keep it in that folder, next to `_internal`; to start it from elsewhere, create a shortcut.
 3. If Windows shows *Windows protected your PC*, click **More info → Run anyway**. You only do this once.
 
+## Updating
+
+Install a new version the same way as the first time (on a Mac, replace the old app in Applications); your settings are kept. From version 1.1, CortexUI tells you when a new version is out (**Help → Check for Updates…**).
+
 ## Getting started
 
 Choose **File → Open Recording Folder…** (or drop a folder on the window). Hover any setting to see what it does, or open **Help → Settings Guide** for all of them.
