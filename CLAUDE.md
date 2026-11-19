@@ -10,11 +10,11 @@ delete details that the code or git history already records.
 
 | | |
 |---|---|
-| Active branch | `docs/v1-released` (from `main` @ `8eb0c0d`, after PR #6 merged `release/v1.0`) |
-| Last commit | Record the CortexUI 1.0.0 release in CLAUDE.md |
+| Active branch | `dev-cycle` (from `docs/v1-released`; plan approved 2026-11-19: native toolchain, CI tweaks, update notifier) |
+| Last commit | Dev-cycle step 0: native Apple Silicon environment (`.venv`) |
 | Released | **CortexUI 1.0.0**, published 2026-11-19: `github.com/sidhantm123/CortexUI/releases/latest` |
-| Tests | 202 passing: `tdtgui/bin/python -m tests` (exit code 0 checked) |
-| Next step | None scheduled: waiting for lab feedback on 1.0.0 (Windows and Intel Mac untested by a person); see §4 Later |
+| Tests | 202 passing: `.venv/bin/python -m tests` (exit code 0 checked) |
+| Next step | Dev-cycle step 1: CI (cancel superseded runs, beta pre-releases, generated notes); then the update notifier |
 
 ### Done
 1. Analog events (`78664d0`), editable onset/offset (`7b559ef`), Blanking tab Basic/Advanced (`e60ac42`).
@@ -462,17 +462,22 @@ Untested for lack of data: TDT `.sev` stores, a real TDT block, a lab probeinter
 
 ## 6. Environment
 
-- **Venv:** `tdtgui/` inside the repo (untracked; the README tells new setups to use `.venv`).
-- **Run:** `tdtgui/bin/python main.py`.
+- **Machine:** M1 MacBook Air, 8 GB RAM, 256 GB disk (~15 GB free): avoid holding whole-file arrays of all
+  channels, and mind disk space (`.venv` 1.3 GB, a build ~0.4 GB).
+- **Toolchain (native arm64 since 2026-11-19):** Homebrew in `/opt/homebrew` (Python 3.13, `gh`). The old Intel
+  Homebrew in `/usr/local` (Rosetta; unsupported by Homebrew since Sept 2026) still holds the user's other tools until
+  they move them. Before the switch everything ran under Rosetta and local builds were Intel; native compute is
+  the same speed, reads ~30 % faster (RP01 20 s × 136 ch: 0.9 vs 1.3 s), tests 14 vs 20 s.
+- **Venv:** `.venv/` inside the repo (untracked). **Run:** `.venv/bin/python main.py`.
 - **Requirements:**
   - `requirements.txt` pins PySide6 6.10, pyqtgraph 0.14, neo 0.14.5, scipy, numpy and tdt.
   - `h5py` is installed in the venv but not required.
 - **Headless UI checks:** `QT_QPA_PLATFORM=offscreen`, then `w.grab().save(...)` for screenshots.
-- **Tools:** `gh` is not installed; the user merges PRs on GitHub.
+- **GitHub CLI:** `gh` is logged in as `sidhantm123` (scopes `repo`, `workflow`). Use it for PRs (`gh pr create`),
+  CI (`gh run watch`, `gh run view --log-failed`) and releases. Still push, tag and merge only with the user's OK.
 - **Packaging:** `pyinstaller --clean --noconfirm cortexui.spec`, `packaging/make_dmg.sh`, `packaging/make_icons.py`;
   `QT_QPA_PLATFORM=offscreen dist/CortexUI.app/Contents/MacOS/CortexUI --smoke-test FOLDER`. Minimum macOS 14
-  (numpy/scipy wheels). Release files come from the CI only (this Mac's Homebrew Python bundles libs for macOS 26).
-- **CI status without signing in:** the anonymous API allows 60 requests/hour (poll ≥ 2 min; `ci_watch`-style
-  monitors used it up); annotations are public (`/check-runs/<job>/annotations`); the run's web page
-  (`github.com/sidhantm123/CortexUI/actions/runs/<id>`) is not rate-limited.
-- **Machine:** 8 GB RAM. Avoid holding whole-file arrays of all channels.
+  (numpy/scipy wheels). Local builds are now Apple Silicon. Release files come from the CI only (Homebrew's Python
+  bundles libraries built for macOS 26).
+- **Without `gh`:** the anonymous API allows 60 requests/hour, job logs need sign-in, annotations are public, and the
+  run's web page is not rate-limited.
