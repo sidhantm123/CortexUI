@@ -10,11 +10,11 @@ delete details that the code or git history already records.
 
 | | |
 |---|---|
-| Active branch | `dev-cycle` (from `docs/v1-released`; plan approved 2026-11-19: native toolchain, CI tweaks, update notifier) |
-| Last commit | Dev-cycle step 3: docs for updates and the release flow |
+| Active branch | `docs/readme-screenshots` (from `main` @ `048cf86`, after PR #7 merged the dev cycle) |
+| Last commit | README screenshots (`docs/screenshots/`, recording name masked) |
 | Released | **CortexUI 1.0.0**, published 2026-11-19: `github.com/sidhantm123/CortexUI/releases/latest` |
 | Tests | 216 passing: `.venv/bin/python -m tests` (exit code 0 checked) |
-| Next step | PR `dev-cycle` → `main` (CI green), then branch cleanup with the user's OK; next release 1.1.0 ships the notifier |
+| Next step | None scheduled. Release 1.1.0 (with the update notifier) when the user wants it |
 
 ### Done
 1. Analog events (`78664d0`), editable onset/offset (`7b559ef`), Blanking tab Basic/Advanced (`e60ac42`).
@@ -38,7 +38,7 @@ delete details that the code or git history already records.
 16. (`8b1d43b`) Audit step 3 (long jobs): Cancel/stale results never install; one job per kind; cancelled/failed exports
     delete their file; quit waits for jobs; progress dialogs freed.
 17. (`98f5b1f`) Audit step 4: `freeze_sigma` in 5 s chunks keeping |x| (float32), cancellable; pipeline frees each chunk
-    before the next (RP01 20 s + CAR peak 2.75 → 1.11 GB).
+    before the next (REF 20 s + CAR peak 2.75 → 1.11 GB).
 18–22. Audit steps 5–9 (`7899b48` render path: NaN RMS no longer freezes the trace, blank/event items reused; `3e49243`
     failed Open/session change nothing, `.tmp` + rename saves; `7658f42` unassigning a line drops its events, trials
     follow renumbering; `97d2973` Analyze through `iter_processed_chunks` with CAR, capped at `MAX_ANALYSIS_SAMPLES`;
@@ -62,7 +62,7 @@ delete details that the code or git history already records.
     (`models.stream_state.array_name`: the label before its trailing number, `elec1-10` → `elec1`; arrays of < 2
     electrodes are left out). Both auto-group buttons keep Exclude marks. The dialog says whether its numbers are
     electrode or channel numbers, and hovering an electrode shows its label and channel.
-28. (`6b84a8f`) **Fix: crash or freeze at the end of a long job** (found while testing 29; intermittent, reproduced on RP01
+28. (`6b84a8f`) **Fix: crash or freeze at the end of a long job** (found while testing 29; intermittent, reproduced on REF
     under load: segfault inside `QProgressDialog::setValue`, and a stall in `progress.close()`). For a modal
     dialog `setValue` processes events, so the job's result could be handled inside it and close (and, since
     audit step 3, `deleteLater`) the dialog under its own `setValue`. Job progress now goes to the bar
@@ -92,7 +92,7 @@ delete details that the code or git history already records.
     rounded tile: `assets/icon.png`, `.ico` (PNG entries, no Pillow), `.icns` (iconutil, Apple's 824/1024 grid).
     Below 128 px the line is dilated to ≥ 1.6 px (it faded at 16–32 px). Window icon outside macOS. `cortexui.spec` (replaces `tdt_viewer.spec`; `upx=False`, `h5py` excluded,
     `LSMinimumSystemVersion` 14.0) and `packaging/make_dmg.sh` (ditto + Applications link, hdiutil UDZO, retries).
-    Local Intel build: 181 MB app, 87 MB `.dmg`, ad-hoc signed, smoke test OK on RP01 (5 s warm, ~40 s first run).
+    Local Intel build: 181 MB app, 87 MB `.dmg`, ad-hoc signed, smoke test OK on REF (5 s warm, ~40 s first run).
 35. (`a237f04`, fixes `f80f111` `71a5723` `e3b3191`) Packaging step 3: `.github/workflows/release.yml` + release notes.
     (Since dev-cycle step 1 it runs on PRs into `main`, tags and on demand; `concurrency` cancels superseded runs;
     draft notes = `release_notes.md` + `releases/generate-notes`; a tag with `-` makes a pre-release.)
@@ -104,7 +104,7 @@ delete details that the code or git history already records.
 
 37. **CortexUI 1.0.0 released** (PR #6 → `main` @ `8eb0c0d`, tag `v1.0.0`; the user published the draft on
     2026-11-19). Release run 44383360463. The released Apple Silicon `.dmg`, downloaded from `releases/latest`, ran
-    natively (arm64, `minos` 14.0, signature valid) and passed the smoke test on RP01.
+    natively (arm64, `minos` 14.0, signature valid) and passed the smoke test on REF.
 
 38. Dev cycle (plan 2026-11-19; `c2af013` `2e92f78` `0ecfc7c`): native Apple Silicon `.venv` (step 0); `main` protected
     by ruleset `main` + auto-deleted merged branches (applied via `gh api`), Build on PRs/tags/on demand with
@@ -203,7 +203,7 @@ tests/                unittest; test_blackrock.py has write_nsx_23() to build sy
     - The blank ends at the first run of N quiet windows after the offset, clamped to the min/max post-pad.
   - Editing events, changing settings or editing the analog list marks results `stale`; they are still applied but
     flagged. Re-detecting events clears them.
-  - **RP01 check (ICMS, 1.5×):** median post-pad 1.65 s (notes: ~1.7 s), 2.1% at the 100 ms floor, none capped. The
+  - **REF check (ICMS, 1.5×):** median post-pad 1.65 s (notes: ~1.7 s), 2.1% at the 100 ms floor, none capped. The
     slowest channels are rows 125, 123, 121, 113, 111 (stim electrode first), matching the notes. A 300 Hz high-pass
     instead gave 1.35 s, which is why the 250–5000 Hz band is used.
 - **Filter chain (`dsp/filters.py`, `dsp/referencing.py`):**
@@ -224,7 +224,7 @@ tests/                unittest; test_blackrock.py has write_nsx_23() to build sy
 - **Vrms:**
   - `MainWindow._rerender_from_buffer` computes `compute_vrms(view, exclude=blank mask)` on every pan or zoom.
   - The mask (`dsp.blanking.blank_mask`) is built per buffer in `_apply_filters`.
-  - On RP01 elec1-45 over 124–129 s with a 250–5000 Hz band-pass: 115 µV raw, 7.5 µV with ICMS blanked, and 6.3 µV if
+  - On REF elec1-45 over 124–129 s with a 250–5000 Hz band-pass: 115 µV raw, 7.5 µV with ICMS blanked, and 6.3 µV if
     the interpolated samples were counted (the bias the notes warn about).
 - **Export (`core/export.py`):**
   - `export_binary` works in exact sample indices and passes `(i + 0.5)/fs` to readers, because `int(t*fs)` can drop a
@@ -233,7 +233,7 @@ tests/                unittest; test_blackrock.py has write_nsx_23() to build sy
   - Chunk boundaries avoid blank spans widened by the interpolation-anchor margin (`CUBIC_ANCHORS + 2`). Without that,
     a blank ending at a boundary loses its right anchor.
   - With CAR/CMR active, all channels are loaded.
-  - On RP01 a full blanked export of 128 ch takes 141 s, writes 7.4 GB and peaks at ~1.5 GB RSS. macOS `ru_maxrss`
+  - On REF a full blanked export of 128 ch takes 141 s, writes 7.4 GB and peaks at ~1.5 GB RSS. macOS `ru_maxrss`
     is in bytes.
 - **Zoom (`TimeZoomViewBox` in `ui/plot_widget.py`, used by Time Series, analog and raster plots):**
   - **Gestures:** vertical wheel / two-finger vertical swipe zooms time; horizontal wheel / two-finger horizontal
@@ -257,14 +257,14 @@ tests/                unittest; test_blackrock.py has write_nsx_23() to build sy
     **decided (2026-11-03): σ per electrode is frozen from the current view at click time** (not from clean stretches or
     per chunk).
   - Threshold lines are `ignoreBounds` InfiniteLines, so they don't affect y auto-fit.
-  - Line drags set k = |y|/σ, coalesced by a 30 ms timer. On RP01 Elec 10 (BP 250–5000, 10 s view): σ 7.7 µV, 19
+  - Line drags set k = |y|/σ, coalesced by a 30 ms timer. On REF Elec 10 (BP 250–5000, 10 s view): σ 7.7 µV, 19
     crossings.
 - **Spikes (4b):**
   - `core/spike_detect.py`:
     - `freeze_sigma` processes the view in 5 s chunks, keeping each channel's |x| as float32 for the median.
     - `detect_spikes` uses `iter_processed_chunks(left_overlap=1, with_mask=True)`. The 1-sample overlap lets a
       crossing exactly at a chunk start be seen, and the refractory `last` is carried across chunks.
-  - `SpikeResult` lives in `AppState.spike_results[stream]` and is saved in the session as sample indices (RP01: 435k
+  - `SpikeResult` lives in `AppState.spike_results[stream]` and is saved in the session as sample indices (REF: 435k
     spikes ≈ 8 MB).
   - It goes stale on blanking apply/remove, filter changes, analog-list edits, re-detected events, and k/polarity/
     refractory changes.
@@ -273,8 +273,8 @@ tests/                unittest; test_blackrock.py has write_nsx_23() to build sy
   - **Performance:**
     - `dsp.filters.apply_filter` filters small blocks of channels in threads (scipy releases the GIL; results are
       identical).
-    - RP01 full detection with BP 250–5000: 472 s → 226 s, peak ~2.9 GB RSS before audit step 4.
-  - **RP01 finding:** with Basic ICMS blanking (post 500 ms), the raster shows a dense block on all electrodes for about
+    - REF full detection with BP 250–5000: 472 s → 226 s, peak ~2.9 GB RSS before audit step 4.
+  - **REF finding:** with Basic ICMS blanking (post 500 ms), the raster shows a dense block on all electrodes for about
     1–3 s after each blank. That is the post-ICMS discharge, not spikes. Advanced blanking is the fix.
 - **Theme (`ui/theme.py`):**
   - `apply_theme(app)` is called once in `main.py`: Fusion style, dark `QPalette`, one QSS and the UI font.
@@ -337,7 +337,7 @@ tests/                unittest; test_blackrock.py has write_nsx_23() to build sy
   - **Analog plot:** same worker and rules, one channel, no processing. While synced and on the main stream it
     loads exactly the main buffer's window right after each main load lands (`_sync_analog_with_main`): those pages
     are in the OS cache, ~1 ms per recorded second instead of a second cold read competing with the main one.
-  - **Measured (RP01, one channel, BP, 20 s view, cold regions):** data after a jump in ~0.2 s (was 0.9–1.3 s);
+  - **Measured (REF, one channel, BP, 20 s view, cold regions):** data after a jump in ~0.2 s (was 0.9–1.3 s);
     steady pans at 10, 20 and 30 s/s never ran past the loaded data. CAR (12.3 s view): 0/40 frames late at 6 s/s,
     4/40 at 12 s/s. App footprint stays ~400 MB single-channel, ~1.1–1.5 GB under CAR. Note macOS `ru_maxrss` also
     counts mapped file pages; use `footprint <pid>` for the app's own memory.
@@ -382,6 +382,9 @@ tests/                unittest; test_blackrock.py has write_nsx_23() to build sy
   `python -m unittest discover` exited 132 after "OK" since long before v1.0). Explicitly deleting pyqtgraph
   widgets (`shiboken6.delete`) crashed too (QGraphicsGridLayout wrapper). Anything that must persist is saved
   before (`QSettings.sync()`); `closeEvent` stops jobs. Run tests with `python -m tests`, never trust "OK" alone.
+- **README screenshots** live in `docs/screenshots/` and must not show recording names (participant codes, dates):
+  the user's originals sit in `assets/appScreenshots/` (git-ignored); the copies have the Block Info name line
+  replaced by "Example recording" (same font and colour, nothing else changed) and no PNG text metadata.
 - Tests delete temp folders with `tests.remove_dir` (Windows can't delete a still-mapped `.nsX`).
 - Don't rebuild a widget from inside its own signal (table `itemChanged`, line `sigPositionChangeFinished`); defer with
   `QTimer.singleShot(0, ...)`.
@@ -425,32 +428,12 @@ Untested for lack of data: TDT `.sev` stores, a real TDT block, a lab probeinter
 
 ## 5. Reference dataset
 
-`~/Developer/NSP/Data/RawData/RP01_Multimodal_Quality_2023-11-08-15-09-07-066_NSP1001.{ns5,ccf,nev}`
-- **Recording:** one stream `ns5`, 136 channels at 30 kHz, 966.6 s, about 8 GB.
-- **Channels:** rows 0–127 are `elecA-NN` (µV); rows 128–135 are `ainp1`–`8` (mV).
-- **Full domain notes:** `~/Developer/NSP/CLAUDE.md`. §2.2 has the analog map and §9.6/§9.11 the blanking measurements.
-
-**Analog map:**
-
-| ainp | Signal | Use |
-|---|---|---|
-| 1 | Second ICMS line (protocol says unassigned) | ignore; it is **not** PNS |
-| **2** | ICMS trigger (CereStim sync) | active-high, 50 pulses at 20 ms spacing per trial |
-| 3 | CereStim monitor out | ignore |
-| **4** | PNS trigger (UECU on/off) | active-high, one 1 s level per trial |
-| 5 | UECU UDP clock, 50 Hz, always on | ignore; it marks nothing |
-| **6** | Tactor trigger | **active-low**, 1 s drop per trial |
-| 7 | Tactor position | continuous |
-| 8 | Unassigned | flat |
-
-**Expected detection with presets** (merge gap 333 ms): ICMS 9 trains of 0.984 s, PNS 9 of ~1 s, Tactor 12 (9 + 3 catch).
-- PNS and Tactor have no crossing chatter (one crossing per trial) and ≥ 22 s between trials, so any gap from about 1.5 s to
-  20 s works.
-- ICMS needs a gap above 20 ms.
-
-**Other facts:**
-- The stim electrode is 10 (`elec1-10`, row 125). Bad electrodes are 7 and 49.
-- Post-ICMS recovery is per channel: median ~0.75 s at 3× and ~1.7 s at 1.5×.
+**REF** (throughout this file) is the user's reference recording: one Blackrock stream `ns5`, 136 channels at 30 kHz
+(rows 0–127 `elecA-NN` in µV, rows 128–135 `ainp1`–`8` in mV), 966.6 s, about 8 GB, with ICMS, PNS and Tactor trials
+on the analog inputs. It lives only on the user's Mac. Its path, analog map, expected detections and electrode facts
+are in Claude's private notes (memory `reference-dataset`). **Its file name holds a participant code and a date: never
+write it, the code or the date in tracked files, commit messages, PR texts or screenshots** (user decision,
+2026-11-28; older commits still contain it).
 
 ---
 
@@ -461,7 +444,7 @@ Untested for lack of data: TDT `.sev` stores, a real TDT block, a lab probeinter
 - **Toolchain (native arm64 since 2026-11-19):** Homebrew in `/opt/homebrew` (Python 3.13, `gh`). The old Intel
   Homebrew in `/usr/local` (Rosetta; unsupported by Homebrew since Sept 2026) still holds the user's other tools until
   they move them. Before the switch everything ran under Rosetta and local builds were Intel; native compute is
-  the same speed, reads ~30 % faster (RP01 20 s × 136 ch: 0.9 vs 1.3 s), tests 14 vs 20 s.
+  the same speed, reads ~30 % faster (REF 20 s × 136 ch: 0.9 vs 1.3 s), tests 14 vs 20 s.
 - **Venv:** `.venv/` inside the repo (untracked). **Run:** `.venv/bin/python main.py`.
 - **Requirements:**
   - `requirements.txt` pins PySide6 6.10, pyqtgraph 0.14, neo 0.14.5, scipy, numpy and tdt.

@@ -48,7 +48,7 @@ class _NsxStream:
         per-sample timestamped files), in which case neo's memory map is used.
 
         Reading that block with ordinary file reads is ~7x faster on a cold disk than
-        neo's memory map (which takes a page fault per 16 KB): RP01, 20 s of one channel,
+        neo's memory map (which takes a page fault per 16 KB): the reference recording, 20 s of one channel,
         1.16 s → 0.16 s.
         """
         if self._layout is None:

@@ -8,6 +8,22 @@ Get the latest version from **[Releases](https://github.com/sidhantm123/CortexUI
 
 **Updates:** from version 1.1, CortexUI checks GitHub for a newer version at launch (at most once a day) and offers the download for your computer; **Help → Check for Updates…** checks at any time, and **Help → Check for Updates Automatically** turns it off. It is one anonymous request: nothing about you or your recordings is sent, and nothing is installed without you. Version 1.0.0 doesn't check, so update it once by hand from the link above.
 
+## Screenshots
+
+[![Blanked and filtered data](docs/screenshots/2-blanked-filtered.png)](docs/screenshots/2-blanked-filtered.png)
+<sub>Stimulation artifacts blanked (shaded) and a filter chain applied (CMR, 360/540 Hz notches, 300–4000 Hz band-pass), with the ICMS events detected from an analog input below.</sub>
+
+<table>
+  <tr>
+    <td width="50%" valign="top"><a href="docs/screenshots/1-raw.png"><img src="docs/screenshots/1-raw.png" alt="Raw data" width="100%"></a><br><sub>A recording as loaded: one electrode's raw trace, with an analog input underneath.</sub></td>
+    <td width="50%" valign="top"><a href="docs/screenshots/3-raster.png"><img src="docs/screenshots/3-raster.png" alt="Raster plot" width="100%"></a><br><sub>Spikes detected over the whole recording, shown as a raster around a stimulation train (shaded).</sub></td>
+  </tr>
+  <tr>
+    <td width="50%" valign="top"><a href="docs/screenshots/4-spectrum.png"><img src="docs/screenshots/4-spectrum.png" alt="Frequency plot" width="100%"></a><br><sub>FFT of one electrode over a chosen interval, shown from 0 to 6 kHz.</sub></td>
+    <td width="50%" valign="top"><a href="docs/screenshots/5-export.png"><img src="docs/screenshots/5-export.png" alt="Export dialog" width="100%"></a><br><sub>Export to binary for spike sorting, at any processing stage and for any electrodes.</sub></td>
+  </tr>
+</table>
+
 ## Features
 
 - Single-channel or overlay (up to 8 channels) time-series plots, smooth on recordings of 2+ hours

@@ -8,7 +8,8 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from models import StreamState, NUMBER_BY_ELECTRODE, NUMBER_BY_CHANNEL
 from models.stream_state import array_name, group_by_array, parse_electrode_numbers
 
-# Rows like RP01: row 0 = electrode 63, row 1 = 64, row 2 = electrode 10, row 3 = elec2-84, row 4 = analog
+# Rows like the reference recording's: row 0 = electrode 63, row 1 = 64, row 2 = electrode 10,
+# row 3 = elec2-84, row 4 = analog
 LABELS = ["elec1-63", "elec1-64", "elec1-10", "elec2-84", "ainp2"]
 
 
