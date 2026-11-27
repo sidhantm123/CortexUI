@@ -25,6 +25,9 @@ env/
 *.manifest
 *.spec.tmp
 
+# Original app screenshots (they show recording names); the README uses masked copies in docs/screenshots/
+assets/appScreenshots/
+
 # Testing
 .pytest_cache/
 htmlcov/

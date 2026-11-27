@@ -287,7 +287,7 @@ class ProgressDialog(QProgressDialog):
     """
     Progress dialog whose progress is reported on its bar (progress_bar().setValue), never with
     QProgressDialog.setValue: for a modal dialog that processes events, so a job's result
-    handled there could close and delete the dialog inside its own setValue (a crash on RP01
+    handled there could close and delete the dialog inside its own setValue (a crash on the reference recording
     under load). The event loop is running anyway.
     """
 
